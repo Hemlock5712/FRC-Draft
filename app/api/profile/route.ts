@@ -1,18 +1,14 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '../auth/[...nextauth]/route';
+import { NextRequest, NextResponse } from 'next/server';
+import { Session } from 'next-auth';
+import { withAuthenticatedSession } from '@/lib/apiUtils';
 import prisma from '@/lib/prisma';
 
-export async function GET() {
-  try {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
+const getProfileHandler = async (sessionUser: Session['user']) => {
+  // sessionUser is guaranteed to be present by withAuthenticatedSession
+  // and includes 'id'. We assume 'email' is also present if 'id' is.
+  // If email can be null on a user object, further checks or different logic might be needed.
+  const user = await prisma.user.findUnique({
+    where: { email: sessionUser.email! },
       select: {
         username: true,
         bio: true,
@@ -26,21 +22,14 @@ export async function GET() {
     }
 
     return NextResponse.json(user);
-  } catch (error) {
-    console.error('Error fetching profile:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
+};
 
-export async function PUT(request: Request) {
-  try {
-    const session = await getServerSession(authOptions);
+export const GET = withAuthenticatedSession(getProfileHandler);
 
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const data = await request.json();
+const updateProfileHandler = async (sessionUser: Session['user'], request: NextRequest) => {
+  // sessionUser is guaranteed by withAuthenticatedSession.
+  // We assume email is present.
+  const data = await request.json();
     const { username, bio, location, team } = data;
 
     // If username is provided, check if it's already taken by another user
@@ -49,7 +38,8 @@ export async function PUT(request: Request) {
         where: { username },
       });
 
-      if (existingUser && existingUser.email !== session.user.email) {
+      // Check if the username is taken by *another* user
+      if (existingUser && existingUser.email !== sessionUser.email!) {
         return NextResponse.json(
           { error: 'Username is already taken' },
           { status: 400 }
@@ -58,7 +48,7 @@ export async function PUT(request: Request) {
     }
 
     const updatedUser = await prisma.user.update({
-      where: { email: session.user.email },
+      where: { email: sessionUser.email! },
       data: {
         username,
         bio,
@@ -73,8 +63,8 @@ export async function PUT(request: Request) {
       location: updatedUser.location,
       team: updatedUser.team,
     });
-  } catch (error) {
-    console.error('Error updating profile:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-} 
+  // The specific 400 error for username taken is handled above.
+  // Other errors will be caught by withAuthenticatedSession's try-catch.
+};
+
+export const PUT = withAuthenticatedSession(updateProfileHandler);

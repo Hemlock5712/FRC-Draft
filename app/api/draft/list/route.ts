@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+// Removed getServerSession and authOptions
+import { Session } from 'next-auth'; // Added Session for sessionUser type
+import { withAuthenticatedSession } from '@/lib/apiUtils'; // Added withAuthenticatedSession
 import prisma from '@/lib/prisma';
-import { DraftRoom, DraftParticipant, User, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client'; // DraftRoom, DraftParticipant, User might be covered by Prisma.DraftRoomGetPayload if not used directly
 
+
+// Interface definitions (TransformedParticipant, TransformedDraftRoom) remain the same
 interface TransformedParticipant {
   user: {
     name: string | null;
@@ -34,6 +37,7 @@ interface TransformedDraftRoom {
   };
 }
 
+// Type definition for DraftRoomWithRelations remains the same
 type DraftRoomWithRelations = Prisma.DraftRoomGetPayload<{
   include: {
     User: {
@@ -42,7 +46,7 @@ type DraftRoomWithRelations = Prisma.DraftRoomGetPayload<{
     DraftParticipant: {
       include: {
         user: {
-          select: { name: true; email: true };
+          select: { name: true; email: true }; // email was already here, keeping it
         };
       };
     };
@@ -52,38 +56,33 @@ type DraftRoomWithRelations = Prisma.DraftRoomGetPayload<{
   };
 }>;
 
-export async function GET() {
-  try {
-    const session = await getServerSession(authOptions);
-    console.log('Session:', session);
+// Define the handler function that will be wrapped
+const getDraftListHandler = async (sessionUser: Session['user'], request?: Request) => {
+  // sessionUser is guaranteed by withAuthenticatedSession.
+  // Using sessionUser.id! as 'id' should be present on a valid sessionUser.
+  // Removed console.log statements for session checking.
 
-    if (!session?.user?.id) {
-      console.log('No session or user ID');
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
-    }
-
-    console.log('Fetching rooms for user:', session.user.id);
-    const activeRooms = await prisma.draftRoom.findMany({
-      where: {
-        OR: [
-          { createdBy: session.user.id },
-          {
-            DraftParticipant: {
-              some: {
-                userId: session.user.id,
+  const activeRooms = await prisma.draftRoom.findMany({
+    where: {
+      OR: [
+        { createdBy: sessionUser.id! },
+        {
+          DraftParticipant: {
+            some: {
+              userId: sessionUser.id!,
               },
             },
           },
         ],
       },
       include: {
-        User: {
+        User: { // This is the relation to the creator User model
           select: { id: true, name: true, email: true }
         },
         DraftParticipant: {
           include: {
-            user: {
-              select: { name: true, email: true }
+            user: { // This is the User related to DraftParticipant
+              select: { name: true, email: true } // Keeping email as it was in original
             }
           }
         },
@@ -92,9 +91,9 @@ export async function GET() {
         }
       },
       orderBy: { createdAt: 'desc' },
-    }) as unknown as DraftRoomWithRelations[];
+    }) as unknown as DraftRoomWithRelations[]; // Casting to unknown first, then to specific type for safety if needed
 
-    console.log('Found rooms:', activeRooms);
+    // console.log('Found rooms:', activeRooms); // Optionally remove or keep for debugging
 
     const transformedActiveRooms: TransformedDraftRoom[] = activeRooms.map((room) => ({
       id: room.id,
@@ -107,31 +106,28 @@ export async function GET() {
       createdBy: room.createdBy,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
-      creator: {
+      creator: { // Corresponds to room.User (the creator)
         id: room.User.id,
         name: room.User.name,
         email: room.User.email
       },
       DraftParticipant: room.DraftParticipant.map((p) => ({
         user: {
-          name: p.user.name,
+          name: p.user.name, // p.user is the user associated with the participant
         },
         isReady: p.isReady,
       })),
       _count: {
         DraftPick: room._count.DraftPick,
-        DraftParticipant: room.DraftParticipant.length
+        DraftParticipant: room.DraftParticipant.length // Calculate participant count
       }
     }));
 
     return NextResponse.json({
       activeRooms: transformedActiveRooms,
     });
-  } catch (error) {
-    console.error('Failed to fetch draft rooms:', error);
-    return NextResponse.json(
-      { message: 'Failed to fetch draft rooms' },
-      { status: 500 }
-    );
-  }
-}
+  // Top-level try-catch is removed as withAuthenticatedSession handles generic errors.
+};
+
+// Export the wrapped handler
+export const GET = withAuthenticatedSession(getDraftListHandler);
