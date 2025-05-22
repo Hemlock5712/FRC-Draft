@@ -1,29 +1,34 @@
-import { getServerSession } from 'next-auth';
+'use client';
+
 import { redirect } from 'next/navigation';
 import { authOptions } from '../../lib/auth';
-import prisma from '../../lib/prisma';
+import { useSession } from 'next-auth/react';
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
-export default async function DashboardLayout({
+export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getServerSession(authOptions);
+  const { data: session, status } = useSession();
 
-  if (!session?.user?.email) {
+  // Redirect to sign in if not authenticated
+  if (status === 'unauthenticated') {
     redirect('/auth/signin');
   }
 
-  const user = await prisma.user.findUnique({
-    where: { email: session.user.email },
-  });
-
-  if (!user) {
-    redirect('/auth/signin');
+  // Show loading state while checking session
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-2xl text-gray-600">Loading...</div>
+      </div>
+    );
   }
 
   return (
-    <div>
+    <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b">
         <div className="container mx-auto px-4 py-4">
           <div className="flex justify-between items-center">

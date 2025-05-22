@@ -13,6 +13,7 @@ interface DraftRoom {
   maxTeams: number;
   pickTimeSeconds: number;
   snakeFormat: boolean;
+  privacy: string;
   createdBy: string;
   creator: {
     id: string;
@@ -33,13 +34,31 @@ interface DraftRoom {
   createdAt: string;
 }
 
+// Define the PublicRoom interface
+interface PublicRoom {
+  _id: string;
+  name: string;
+  description?: string | null;
+  maxTeams: number;
+  participantCount: number;
+  hasSpace: boolean;
+  creator: {
+    name?: string | null;
+    email?: string | null;
+  };
+}
+
 export default function Dashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [activeRooms, setActiveRooms] = useState<DraftRoom[]>([]);
+  const [publicRooms, setPublicRooms] = useState<PublicRoom[]>([]);
   const [loading, setLoading] = useState(true);
+  const [publicRoomsLoading, setPublicRoomsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [publicRoomsError, setPublicRoomsError] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const [joiningRoom, setJoiningRoom] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -50,6 +69,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (session?.user?.id) {
       fetchDraftRooms();
+      fetchPublicRooms();
     }
   }, [session]);
 
@@ -58,14 +78,70 @@ export default function Dashboard() {
       setLoading(true);
       const response = await fetch('/api/draft/list');
       if (!response.ok) {
-        throw new Error('Failed to fetch draft rooms');
+        const errData = await response.json().catch(() => ({}));
+        console.error('Failed to fetch draft rooms:', response.status);
+        throw new Error(`Failed to fetch draft rooms: ${response.status}`);
       }
       const data = await response.json();
-      setActiveRooms(data.activeRooms);
+      
+      // Check if data exists and has activeRooms array
+      if (!data || !data.activeRooms) {
+        setActiveRooms([]);
+        return;
+      }
+
+      // Check if the data structure is as expected in the Convex response
+      // Convex sends back _id for documents but our interface expects id
+      const rooms = data.activeRooms.map((room: any) => {
+        // Map Convex _id to id for consistency with our interface
+        if (room._id && !room.id) {
+          return { ...room, id: room._id };
+        }
+        return room;
+      });
+      
+      // Filter out any rooms without a valid ID
+      const validRooms = Array.isArray(rooms) 
+        ? rooms.filter((room: any) => room && (room.id || room._id)) 
+        : [];
+      
+      setActiveRooms(validRooms);
     } catch (err) {
+      console.error('Error in fetchDraftRooms:', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchPublicRooms = async () => {
+    try {
+      setPublicRoomsLoading(true);
+      const response = await fetch('/api/draft/public');
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        console.error('Failed to fetch public rooms:', response.status);
+        throw new Error(`Failed to fetch public rooms: ${response.status}`);
+      }
+      const data = await response.json();
+      
+      // Check if data exists and has publicRooms array
+      if (!data || !data.publicRooms) {
+        setPublicRooms([]);
+        return;
+      }
+      
+      // Filter out any rooms without a valid ID
+      const validPublicRooms = Array.isArray(data.publicRooms) 
+        ? data.publicRooms.filter((room: any) => room && room._id) 
+        : [];
+      
+      setPublicRooms(validPublicRooms);
+    } catch (err) {
+      console.error('Error in fetchPublicRooms:', err);
+      setPublicRoomsError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setPublicRoomsLoading(false);
     }
   };
 
@@ -83,6 +159,11 @@ export default function Dashboard() {
   };
 
   const handleDelete = async (roomId: string) => {
+    if (!roomId) {
+      setError('Invalid room ID');
+      return;
+    }
+    
     if (!confirm('Are you sure you want to delete this draft room? This action cannot be undone.')) {
       return;
     }
@@ -104,6 +185,32 @@ export default function Dashboard() {
       setError(err instanceof Error ? err.message : 'Failed to delete draft room');
     } finally {
       setDeleteLoading(null);
+    }
+  };
+
+  const handleJoinPublicRoom = async (roomId: string) => {
+    if (!roomId) {
+      setPublicRoomsError("Invalid room ID");
+      return;
+    }
+    
+    setJoiningRoom(roomId);
+    try {
+      const response = await fetch(`/api/draft/${encodeURIComponent(roomId)}/join`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to join draft room');
+      }
+
+      // Navigate to the draft room
+      router.push(`/draft/${roomId}`);
+    } catch (err) {
+      setPublicRoomsError(err instanceof Error ? err.message : 'Failed to join draft room');
+    } finally {
+      setJoiningRoom(null);
     }
   };
 
@@ -171,7 +278,7 @@ export default function Dashboard() {
         {/* Active Draft Rooms */}
         <div className="bg-white shadow-lg rounded-lg overflow-hidden">
           <div className="px-6 py-5 border-b border-gray-200">
-            <h2 className="text-xl font-semibold text-gray-900">Your Draft Rooms</h2>
+            <h2 className="text-xl font-semibold text-gray-900">Your Active Draft Rooms</h2>
           </div>
           <div className="divide-y divide-gray-200">
             {loading ? (
@@ -184,14 +291,17 @@ export default function Dashboard() {
               </div>
             ) : activeRooms.length === 0 ? (
               <div className="px-6 py-4 text-sm text-gray-500 italic">
-                No draft rooms available yet. Create one to get started!
+                You haven't created or joined any draft rooms yet.
               </div>
             ) : (
               activeRooms.map((room) => (
-                <div key={room.id} className="block hover:bg-gray-50 transition-colors">
+                <div key={`active-${room.id}`} className="block hover:bg-gray-50 transition-colors">
                   <div className="px-6 py-4">
                     <div className="flex items-center justify-between">
-                      <Link href={`/draft/${room.id}`} className="flex-1">
+                      <Link 
+                        href={`/draft/${room.id}`} 
+                        className="flex-1"
+                      >
                         <div>
                           <h3 className="text-lg font-medium text-gray-900">{room.name}</h3>
                           {room.description && (
@@ -209,6 +319,9 @@ export default function Dashboard() {
                       <div className="flex items-center space-x-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(room.status)}`}>
                           {room.status}
+                        </span>
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${room.privacy === 'PUBLIC' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                          {room.privacy === 'PUBLIC' ? 'Public' : 'Private'}
                         </span>
                         {session?.user?.id === room.createdBy && (
                           <button
@@ -230,6 +343,67 @@ export default function Dashboard() {
                           </button>
                         )}
                       </div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Public Draft Rooms */}
+        <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+          <div className="px-6 py-5 border-b border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-900">Available Public Draft Rooms</h2>
+          </div>
+          <div className="divide-y divide-gray-200">
+            {publicRoomsLoading ? (
+              <div className="px-6 py-4 text-sm text-gray-500">
+                Loading public draft rooms...
+              </div>
+            ) : publicRoomsError ? (
+              <div className="px-6 py-4 text-sm text-red-500">
+                Error: {publicRoomsError}
+              </div>
+            ) : publicRooms.length === 0 ? (
+              <div className="px-6 py-4 text-sm text-gray-500 italic">
+                No public draft rooms available right now.
+              </div>
+            ) : (
+              publicRooms.map((room) => (
+                <div key={`public-${room._id}`} className="block hover:bg-gray-50 transition-colors">
+                  <div className="px-6 py-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <h3 className="text-lg font-medium text-gray-900">{room.name}</h3>
+                        {room.description && (
+                          <p className="mt-1 text-sm text-gray-500">{room.description}</p>
+                        )}
+                        <div className="mt-2 flex items-center text-sm text-gray-500 space-x-4">
+                          <span>{room.participantCount} / {room.maxTeams} participants</span>
+                          <span>•</span>
+                          <span>Created by {room.creator.name || room.creator.email}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (room._id) {
+                            handleJoinPublicRoom(room._id);
+                          } else {
+                            setPublicRoomsError('Invalid room ID');
+                          }
+                        }}
+                        disabled={joiningRoom === room._id || !room.hasSpace}
+                        className={`px-4 py-2 rounded-md text-sm font-medium ${
+                          joiningRoom === room._id 
+                            ? 'bg-blue-400 text-white cursor-not-allowed' 
+                            : !room.hasSpace 
+                              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                              : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
+                      >
+                        {joiningRoom === room._id ? 'Joining...' : !room.hasSpace ? 'Room Full' : 'Join'}
+                      </button>
                     </div>
                   </div>
                 </div>

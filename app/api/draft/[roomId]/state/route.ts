@@ -1,254 +1,71 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import prisma from '@/lib/prisma';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
-import { Prisma } from '@prisma/client';
+import { authOptions } from '@/lib/auth';
+import { ConvexHttpClient } from 'convex/browser';
+import { api } from '@/convex/_generated/api';
+import { Id } from '@/convex/_generated/dataModel';
 
-type DraftRoomWithRelations = Prisma.DraftRoomGetPayload<{
-  include: {
-    DraftParticipant: {
-      include: {
-        user: true;
-      };
-    };
-    DraftPick: {
-      include: {
-        participant: {
-          include: {
-            user: true;
-          };
-        };
-        team: true;
-      };
-    };
-  };
-}>;
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
 export async function GET(
   request: Request,
   context: { params: Promise<{ roomId: string }> }
 ) {
   try {
+    // 1) Authenticate
     const session = await getServerSession(authOptions);
-    console.log('Session in API route:', {
-      session: session ? {
-        ...session,
-        user: session.user ? {
-          id: session.user.id,
-          email: session.user.email,
-          name: session.user.name
-        } : null
-      } : null
-    });
-
-    if (!session) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    if (!session?.user?.id) {
+      return NextResponse.json({ message: 'Not authenticated' }, { status: 401 });
     }
 
-    if (!session.user) {
-      return NextResponse.json({ error: 'No user in session' }, { status: 401 });
+    // 2) Validate roomId - await the params
+    const params = await context.params;
+    const { roomId } = params;
+    if (!roomId || roomId === 'undefined') {
+      return NextResponse.json({ message: 'Invalid draft room ID' }, { status: 400 });
     }
 
-    if (!session.user.id) {
-      return NextResponse.json({ error: 'No user ID in session' }, { status: 401 });
-    }
+    try {
+      // 3) Type assertion for Convex Id only if we have a valid roomId
+      const draftState = await convex.query(api.draftPicks.getDraftState, {
+        roomId: roomId as Id<"draftRooms">,
+        userId: session.user.id,
+      });
 
-    const { roomId } = await context.params;
-    if (!roomId) {
-      return NextResponse.json({ error: 'Room ID is required' }, { status: 400 });
-    }
-
-    // Get the draft room
-    const draftRoom = await prisma.draftRoom.findUnique({
-      where: { id: roomId },
-      include: {
-        DraftParticipant: {
-          include: {
-            user: true,
-          },
-        },
-        DraftPick: {
-          orderBy: {
-            pickNumber: 'asc',
-          },
-          include: {
-            participant: {
-              include: {
-                user: true,
-              },
-            },
-            team: true,
-          },
-        },
-      },
-    });
-
-    if (!draftRoom) {
-      return NextResponse.json({ error: 'Draft room not found' }, { status: 404 });
-    }
-
-    console.log('Draft room debug:', {
-      id: draftRoom.id,
-      name: draftRoom.name,
-      participantCount: draftRoom.DraftParticipant.length,
-      participants: draftRoom.DraftParticipant.map(p => ({
-        id: p.id,
-        userId: p.userId,
-        isReady: p.isReady,
-        user: {
-          id: p.user.id,
-          email: p.user.email,
-          name: p.user.name
-        }
-      }))
-    });
-
-    // Check if user is a participant
-    const isParticipant = draftRoom.DraftParticipant.some(
-      (p) => p.userId === session.user.id
-    );
-    
-    console.log('Auth debug:', {
-      sessionUserId: session.user.id,
-      participants: draftRoom.DraftParticipant.map(p => ({
-        id: p.id,
-        userId: p.userId,
-        user: {
-          id: p.user.id,
-          email: p.user.email,
-          name: p.user.name
-        }
-      })),
-      isParticipant
-    });
-
-    if (!isParticipant) {
-      return NextResponse.json(
-        { 
-          error: 'Not a participant in this draft',
-          debug: {
-            userId: session.user.id,
-            participants: draftRoom.DraftParticipant.map(p => ({
-              userId: p.userId,
-              user: {
-                id: p.user.id,
-                email: p.user.email,
-                name: p.user.name
-              }
-            }))
-          }
-        },
-        { status: 403 }
+      if (!draftState) {
+        return NextResponse.json({ message: 'Draft room not found or access denied' }, { status: 404 });
+      }
+      
+      // 4) Validate participant access
+      const isParticipant = draftState.participants.some(
+        (p: any) => p.userId === session.user.id
       );
+
+      if (!isParticipant) {
+        return NextResponse.json(
+          { message: 'Not a participant in this draft' }, 
+          { status: 403 }
+        );
+      }
+
+      return NextResponse.json(draftState);
+
+    } catch (error: any) {
+      // 5) Handle Convex-specific errors
+      if (error.message?.includes('Value does not match validator')) {
+        return NextResponse.json({ message: 'Invalid draft room ID format' }, { status: 400 });
+      }
+      
+      const errorMessage = error.data?.message || error.message || 'Failed to fetch draft state';
+      const errorStatus = error.data?.status || 500;
+      console.error('Convex error fetching draft state:', error.data || error);
+      return NextResponse.json({ message: errorMessage }, { status: errorStatus });
     }
 
-    // Calculate current drafter
-    const totalPicks = draftRoom.DraftPick.length;
-    const currentPickNumber = totalPicks + 1;
-    const currentRound = Math.floor(totalPicks / draftRoom.maxTeams) + 1;
-    const pickInRound = totalPicks % draftRoom.maxTeams;
-    
-    // For snake draft, reverse order in even rounds
-    const draftOrder = draftRoom.DraftParticipant.map(p => p.userId);
-    if (draftRoom.snakeFormat && currentRound % 2 === 0) {
-      draftOrder.reverse();
-    }
-
-    const currentDrafterIndex = pickInRound;
-    const currentDrafterId = draftOrder[currentDrafterIndex];
-    const currentDrafter = draftRoom.DraftParticipant.find(
-      (p) => p.userId === currentDrafterId
-    );
-
-    // Get available teams (not yet picked)
-    const pickedTeamIds = draftRoom.DraftPick.map((pick) => pick.teamId);
-    const availableTeams = await prisma.team.findMany({
-      where: {
-        id: {
-          notIn: pickedTeamIds,
-        },
-      },
-      orderBy: {
-        teamNumber: 'asc',
-      },
-    });
-
-    // Calculate time remaining (if pick timer is active)
-    const lastPick = draftRoom.DraftPick[draftRoom.DraftPick.length - 1];
-    const timeRemaining = lastPick
-      ? Math.max(
-          0,
-          draftRoom.pickTimeSeconds -
-            Math.floor((Date.now() - new Date(lastPick.pickedAt).getTime()) / 1000)
-        )
-      : draftRoom.pickTimeSeconds;
-
-    return NextResponse.json({
-      room: {
-        id: draftRoom.id,
-        name: draftRoom.name,
-        description: draftRoom.description,
-        status: draftRoom.status,
-        maxTeams: draftRoom.maxTeams,
-        pickTimeLimit: draftRoom.pickTimeSeconds,
-        isSnakeDraft: draftRoom.snakeFormat,
-        creatorId: draftRoom.createdBy,
-        startTime: draftRoom.startTime,
-        endTime: draftRoom.endTime,
-        createdAt: draftRoom.createdAt,
-        updatedAt: draftRoom.updatedAt
-      },
-      participants: draftRoom.DraftParticipant.map((p) => ({
-        id: p.id,
-        userId: p.userId,
-        isReady: p.isReady,
-        joinedAt: p.createdAt,
-        updatedAt: p.updatedAt,
-        user: {
-          name: p.user.name,
-          email: p.user.email,
-        },
-      })),
-      picks: draftRoom.DraftPick.map((p) => ({
-        id: p.id,
-        teamId: p.teamId,
-        pickNumber: p.pickNumber,
-        participantId: p.participantId,
-        pickedAt: p.pickedAt,
-        team: {
-          id: p.team.id,
-          name: p.team.name,
-          number: p.team.teamNumber,
-        },
-        participant: {
-          id: p.participant.id,
-          user: {
-            name: p.participant.user.name,
-            email: p.participant.user.email,
-          },
-        },
-      })),
-      availableTeams: availableTeams.map((t) => ({
-        id: t.id,
-        name: t.name,
-        number: t.teamNumber,
-      })),
-      currentDrafter: currentDrafter ? {
-        id: currentDrafter.id,
-        user: {
-          name: currentDrafter.user.name,
-          email: currentDrafter.user.email,
-        },
-      } : null,
-      isMyTurn: currentDrafterId === session.user.id,
-      currentPickNumber,
-      currentRound,
-      timeRemaining,
-    });
   } catch (error) {
-    console.error('Error in draft state route:', error);
+    console.error('Outer error in draft state route:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Internal server error' },
+      { message: 'An unexpected error occurred' },
       { status: 500 }
     );
   }
