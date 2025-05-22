@@ -4,64 +4,86 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { use } from 'react';
-import type { Team, DraftRoom, DraftParticipant, DraftPick, User } from '@prisma/client';
+// import type { Team, DraftRoom, DraftParticipant, DraftPick, User } from '@prisma/client'; // Prisma import removed
+
+// Define types based on Convex schema
+interface ConvexDoc {
+  _id: string;
+  _creationTime: number; // Convex default field
+}
+
+interface ConvexUser extends ConvexDoc {
+  name?: string | null;
+  email?: string | null;
+  // Add other user fields from schema if needed by the UI
+}
+
+interface ConvexTeam extends ConvexDoc {
+  teamId: string; // This is the custom `frcXXX` ID
+  name: string;
+  teamNumber: number;
+  // Add other team fields from schema if needed by the UI
+}
+
+interface ConvexDraftRoom extends ConvexDoc {
+  name: string;
+  description?: string | null;
+  status: string;
+  maxTeams: number;
+  pickTimeSeconds: number;
+  snakeFormat: boolean;
+  createdBy: string; // User _id
+  startTime?: string | null; // ISO Date string
+  endTime?: string | null; // ISO Date string
+  createdAt: string; // ISO Date string
+  updatedAt: string; // ISO Date string
+  privacy: string; // "PUBLIC" or "PRIVATE"
+}
+
+interface ConvexDraftParticipant extends ConvexDoc {
+  userId: string; // User _id
+  draftRoomId: string; // DraftRoom _id
+  isReady: boolean;
+  user: {
+    name?: string | null;
+    email?: string | null;
+    // Potentially other user fields if the API joins them
+  };
+  // Add other participant fields like pickOrder if needed
+}
+
+interface ConvexDraftPick extends ConvexDoc {
+  teamId: string; // This refers to ConvexTeam._id (or teams.teamId if it's the custom one, needs clarification from API response)
+  pickNumber: number;
+  participantId: string; // ConvexDraftParticipant _id
+  pickedAt: string; // ISO Date string
+  team: {
+    // Assuming the API will populate this based on teamId
+    _id: string; // ConvexTeam _id
+    name: string;
+    teamNumber: number;
+  };
+  participant: {
+    // Assuming the API will populate this based on participantId
+    _id: string; // ConvexDraftParticipant _id
+    user: {
+      name?: string | null;
+      email?: string | null;
+    };
+  };
+  // Add other pick fields like roundNumber if needed
+}
 
 interface DraftRoomState {
-  room: {
-    id: string;
-    name: string;
-    description: string | null;
-    status: string;
-    maxTeams: number;
-    pickTimeSeconds: number;
-    snakeFormat: boolean;
-    createdBy: string;
-    startTime: Date | null;
-    endTime: Date | null;
-    createdAt: Date;
-    updatedAt: Date;
-  };
-  participants: {
-    id: string;
-    userId: string;
-    roomId: string;
-    isReady: boolean;
-    user: {
-      name: string | null;
-      email: string | null;
-    };
-  }[];
-  picks: {
-    id: string;
-    teamId: string;
-    pickNumber: number;
-    participantId: string;
-    pickedAt: Date;
-    team: {
-      id: string;
-      name: string;
-      number: number;
-    };
-    participant: {
-      id: string;
-      user: {
-        name: string | null;
-        email: string | null;
-      };
-    };
-  }[];
-  availableTeams: {
-    id: string;
-    name: string;
-    number: number;
-  }[];
-  currentDrafter: {
-    id: string;
-    user: {
-      name: string | null;
-      email: string | null;
-    };
-  } | null;
+  room: ConvexDraftRoom & { _id: string }; // Ensure _id is present, ConvexDoc provides it
+  participants: (ConvexDraftParticipant & { _id: string; user: { name?: string | null; email?: string | null } })[];
+  picks: (ConvexDraftPick & { 
+    _id: string; 
+    team: { _id: string; name: string; teamNumber: number }; 
+    participant: { _id: string; user: { name?: string | null; email?: string | null } }; 
+  })[];
+  availableTeams: (ConvexTeam & { _id: string })[];
+  currentDrafter: (ConvexDraftParticipant & { _id: string; user: { name?: string | null; email?: string | null } }) | null;
   isMyTurn: boolean;
   currentPickNumber: number;
   currentRound: number;
@@ -76,6 +98,17 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
+
+  // Debug log for roomId
+  useEffect(() => {
+    console.log('DraftRoom - roomId:', resolvedParams?.roomId);
+    // Additional check for undefined roomId
+    if (resolvedParams?.roomId === 'undefined' || !resolvedParams?.roomId) {
+      console.error('Invalid roomId detected:', resolvedParams?.roomId);
+      setError('Invalid draft room ID');
+      return;
+    }
+  }, [resolvedParams]);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -106,59 +139,45 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
   }, [session, resolvedParams, status]);
 
   const fetchDraftState = async () => {
+    if (!resolvedParams?.roomId || resolvedParams.roomId === 'undefined') {
+      console.error('Invalid roomId for fetchDraftState:', resolvedParams?.roomId);
+      setError('Invalid draft room ID');
+      return;
+    }
+
     try {
-      if (!resolvedParams?.roomId) {
-        throw new Error('Room ID is required');
+      setLoading(true);
+      
+      // Make the API call with explicit string conversion of roomId
+      const roomId = resolvedParams.roomId.toString();
+      console.log(`Fetching draft state for room: ${roomId}`);
+      
+      const response = await fetch(`/api/draft/${roomId}/state`);
+      
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.message || data.error || 'Failed to fetch draft state');
       }
-
-      if (!session?.user?.id) {
-        throw new Error('Not authenticated');
-      }
-
-      console.log('Fetching draft state with session:', {
-        userId: session.user.id,
-        roomId: resolvedParams.roomId
-      });
-
-      const response = await fetch(`/api/draft/${resolvedParams.roomId}/state`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-      });
 
       const data = await response.json();
-      console.log('Draft state data:', data);
-
-      if (!response.ok) {
-        console.error('Draft state error response:', data);
-        throw new Error(data.error || 'Failed to fetch draft state');
-      }
-
-      if (!data.participants || !Array.isArray(data.participants)) {
-        console.error('Invalid draft state data:', data);
-        throw new Error('Invalid draft state data received');
-      }
-
       setDraftState(data);
       setError(null);
     } catch (err) {
       console.error('Error fetching draft state:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'Failed to fetch draft state');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleTeamPick = async (teamId: string) => {
+  const handleTeamPick = async (team_Id: string) => {
     try {
       const response = await fetch(`/api/draft/${resolvedParams.roomId}/pick`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ teamId }),
+        body: JSON.stringify({ teamId: team_Id }),
       });
 
       if (!response.ok) {
@@ -174,15 +193,25 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
   };
 
   const handleJoinDraft = async () => {
+    if (!resolvedParams?.roomId || resolvedParams.roomId === 'undefined') {
+      console.error('Invalid roomId for handleJoinDraft:', resolvedParams?.roomId);
+      setError('Invalid draft room ID');
+      return;
+    }
+
     try {
       setIsJoining(true);
-      const response = await fetch(`/api/draft/${resolvedParams.roomId}/join`, {
+      // Ensure roomId is a string
+      const roomId = resolvedParams.roomId.toString();
+      console.log(`Joining draft room: ${roomId}`);
+      
+      const response = await fetch(`/api/draft/${roomId}/join`, {
         method: 'POST',
       });
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to join draft room');
+        throw new Error(data.message || data.error || 'Failed to join draft room');
       }
 
       // Refresh draft state
@@ -276,9 +305,9 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
             <div className="space-y-4">
               {draftState.participants.map((participant) => (
                 <div
-                  key={participant.id}
+                  key={participant._id}
                   className={`flex items-center justify-between p-3 rounded-lg ${
-                    draftState.currentDrafter?.id === participant.id
+                    draftState.currentDrafter?._id === participant._id
                       ? 'bg-blue-50 border-2 border-blue-200'
                       : 'bg-gray-50'
                   }`}
@@ -291,7 +320,7 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
                       {participant.isReady ? 'Ready' : 'Not Ready'}
                     </div>
                   </div>
-                  {draftState.currentDrafter?.id === participant.id && (
+                  {draftState.currentDrafter?._id === participant._id && (
                     <div className="text-sm font-medium text-blue-600">
                       Currently Picking
                     </div>
@@ -307,12 +336,12 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
             <div className="space-y-4">
               {draftState.picks.map((pick) => (
                 <div
-                  key={pick.id}
+                  key={pick._id}
                   className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
                 >
                   <div>
                     <div className="font-medium text-gray-900">
-                      {pick.team.number} - {pick.team.name}
+                      {pick.team.teamNumber} - {pick.team.name}
                     </div>
                     <div className="text-sm text-gray-500">
                       Picked by {pick.participant.user.name || pick.participant.user.email}
@@ -332,13 +361,13 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {draftState.availableTeams.map((team) => (
                     <button
-                      key={team.id}
-                      onClick={() => handleTeamPick(team.id)}
+                      key={team._id}
+                      onClick={() => handleTeamPick(team._id)}
                       className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:shadow-md transition-all"
                     >
                       <div>
                         <div className="font-medium text-gray-900">
-                          {team.number} - {team.name}
+                          {team.teamNumber} - {team.name}
                         </div>
                       </div>
                     </button>

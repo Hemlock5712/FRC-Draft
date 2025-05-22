@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import prisma from '@/lib/prisma';
+import { ConvexHttpClient } from 'convex/browser';
+import { api } from '@/convex/_generated/api';
+import { Id } from '@/convex/_generated/dataModel';
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
 export async function DELETE(request: Request) {
   try {
@@ -19,41 +23,23 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ message: 'Draft room ID is required' }, { status: 400 });
     }
 
-    // 3) Check if user is the creator of the draft room
-    const draftRoom = await prisma.draftRoom.findUnique({
-      where: { id: roomId },
-      include: { User: true }
-    });
-
-    if (!draftRoom) {
-      return NextResponse.json({ message: 'Draft room not found' }, { status: 404 });
+    try {
+      const result = await convex.mutation(api.draftRooms.deleteDraftRoom, {
+        roomId: roomId as Id<"draftRooms">,
+        userId: session.user.id,
+      });
+      return NextResponse.json(result);
+    } catch (error: any) {
+      const errorMessage = error.data?.message || error.message || 'Failed to delete draft room';
+      const errorStatus = error.data?.status || 500;
+      console.error('Convex error deleting draft room:', error.data || error);
+      return NextResponse.json({ error: errorMessage }, { status: errorStatus });
     }
 
-    if (draftRoom.createdBy !== session.user.id) {
-      return NextResponse.json({ message: 'Only the creator can delete the draft room' }, { status: 403 });
-    }
-
-    // 4) Delete the draft room and all related data
-    await prisma.$transaction([
-      // Delete all picks
-      prisma.draftPick.deleteMany({
-        where: { draftRoomId: roomId }
-      }),
-      // Delete all participants
-      prisma.draftParticipant.deleteMany({
-        where: { draftRoomId: roomId }
-      }),
-      // Delete the draft room
-      prisma.draftRoom.delete({
-        where: { id: roomId }
-      })
-    ]);
-
-    return NextResponse.json({ message: 'Draft room deleted successfully' });
   } catch (error) {
-    console.error('Failed to delete draft room:', error);
+    console.error('Outer error deleting draft room:', error);
     return NextResponse.json(
-      { message: 'Failed to delete draft room' },
+      { message: 'Failed to delete draft room' }, // Generic outer error
       { status: 500 }
     );
   }

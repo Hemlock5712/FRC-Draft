@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import prisma from '@/lib/prisma';
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "@/convex/_generated/api";
+
+// Create a Convex HTTP client for server-side API routes
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
 export async function POST(request: Request) {
   try {
@@ -16,7 +20,7 @@ export async function POST(request: Request) {
 
     // Parse request body
     const body = await request.json();
-    const { name, description, maxTeams, pickTimeSeconds, snakeFormat } = body;
+    const { name, description, maxTeams, pickTimeSeconds, snakeFormat, privacy } = body;
 
     // Validate required fields
     if (!name) {
@@ -40,35 +44,18 @@ export async function POST(request: Request) {
       );
     }
 
-    // Create draft room and add creator as first participant in a transaction
-    const draftRoom = await prisma.$transaction(async (tx) => {
-      // Create the draft room
-      const room = await tx.draftRoom.create({
-        data: {
-          name,
-          description,
-          maxTeams,
-          pickTimeSeconds,
-          snakeFormat,
-          createdBy: session.user.id,
-          status: 'PENDING',
-        },
-      });
-
-      // Add creator as first participant
-      await tx.draftParticipant.create({
-        data: {
-          userId: session.user.id,
-          draftRoomId: room.id,
-          pickOrder: 1,
-          isReady: true, // Creator is automatically ready
-        },
-      });
-
-      return room;
+    // Call Convex mutation to create the draft room
+    const draftRoomId = await convex.mutation(api.draftRooms.createDraftRoom, {
+      name,
+      description,
+      maxTeams,
+      pickTimeSeconds,
+      snakeFormat,
+      privacy: privacy || "PUBLIC", // Default to PUBLIC if not specified
+      userId: session.user.id,
     });
 
-    return NextResponse.json(draftRoom);
+    return NextResponse.json({ id: draftRoomId });
   } catch (error) {
     console.error('Failed to create draft room:', error);
     return NextResponse.json(

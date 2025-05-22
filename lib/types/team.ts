@@ -1,5 +1,5 @@
 export interface Team {
-  id: string;
+  _id: string;
   teamNumber: number;
   name: string;
   city: string | null;

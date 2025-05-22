@@ -1,154 +1,114 @@
 import * as tba from '@/lib/tba';
-import prisma from '@/lib/prisma';
 import { TBATeamSimple } from '@/lib/types/tba';
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "@/convex/_generated/api";
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
 export interface SyncResult {
-  success: boolean;
-  teamsCount?: number;
-  error?: string;
+  teamsCreated: number;
+  teamsUpdated: number;
+  errors: string[];
 }
 
-export class SyncService {
-  private static instance: SyncService;
+export async function syncTeams(): Promise<SyncResult> {
+  const result: SyncResult = {
+    teamsCreated: 0,
+    teamsUpdated: 0,
+    errors: [],
+  };
 
-  private constructor() {}
-
-  static getInstance(): SyncService {
-    if (!SyncService.instance) {
-      SyncService.instance = new SyncService();
-    }
-    return SyncService.instance;
-  }
-
-  private async shouldSync(type: string, minInterval: number): Promise<boolean> {
-    // Get or create sync state
-    let syncState = await prisma.syncState.findUnique({
-      where: { type },
+  try {
+    // Update sync state to indicate sync is in progress
+    await convex.mutation(api.syncStates.upsertSyncState, {
+      type: 'teams',
+      syncInProgress: true,
     });
 
-    if (!syncState) {
-      syncState = await prisma.syncState.create({
-        data: {
-          type,
-          lastSyncTime: new Date(0), // Set to epoch to ensure first sync
-          syncInProgress: false,
-        },
-      });
-    }
+    // Get teams from TBA (paginated)
+    const teams: TBATeamSimple[] = [];
+    let page = 1;
+    let consecutiveEmptyPages = 0;
+    const MAX_EMPTY_PAGES = 3;
 
-    if (syncState.syncInProgress) return false;
-    
-    const timeSinceLastSync = Date.now() - syncState.lastSyncTime.getTime();
-    return timeSinceLastSync > minInterval;
-  }
-
-  private async setSyncProgress(type: string, inProgress: boolean): Promise<void> {
-    await prisma.syncState.upsert({
-      where: { type },
-      create: {
-        type,
-        lastSyncTime: new Date(),
-        syncInProgress: inProgress,
-      },
-      update: {
-        syncInProgress: inProgress,
-        ...(inProgress ? {} : { lastSyncTime: new Date() }),
-      },
-    });
-  }
-
-  async syncTeams(force: boolean = false): Promise<SyncResult> {
-    const SYNC_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
-    
-    try {
-      if (!force && !await this.shouldSync('teams', SYNC_INTERVAL)) {
-        return { success: true, teamsCount: 0 };
-      }
-
-      await this.setSyncProgress('teams', true);
-
-      // Get all teams from TBA (paginated)
-      const teams: TBATeamSimple[] = [];
-      let page = 1;
-      let consecutiveEmptyPages = 0;
-      const MAX_EMPTY_PAGES = 3;
-
-      while (consecutiveEmptyPages < MAX_EMPTY_PAGES) {
-        try {
-          const pageTeams = await tba.getTeamsPage(page);
-          if (!pageTeams || pageTeams.length === 0) {
-            consecutiveEmptyPages++;
-          } else {
-            consecutiveEmptyPages = 0;
-            teams.push(...pageTeams);
-          }
+    while (consecutiveEmptyPages < MAX_EMPTY_PAGES) {
+      try {
+        const pageTeams = await tba.getTeamsPage(page);
+        if (!pageTeams || pageTeams.length === 0) {
+          consecutiveEmptyPages++;
+        } else {
+          consecutiveEmptyPages = 0;
+          teams.push(...pageTeams);
+        }
+        page++;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('404')) {
+          consecutiveEmptyPages++;
+        } else {
+          console.error(`Error fetching page ${page}:`, error);
           page++;
-        } catch (error) {
-          if (error instanceof Error && error.message.includes('404')) {
-            consecutiveEmptyPages++;
-          } else {
-            console.error(`Error fetching page ${page}:`, error);
-            page++;
-          }
         }
       }
-
-      if (teams.length === 0) {
-        throw new Error('No teams found from TBA API');
-      }
-
-      // Batch update teams in chunks to avoid memory issues
-      const BATCH_SIZE = 100;
-      for (let i = 0; i < teams.length; i += BATCH_SIZE) {
-        const batch = teams.slice(i, i + BATCH_SIZE);
-        await prisma.$transaction(
-          batch.map(team => {
-            const teamNumber = team.team_number;
-            const teamKey = `frc${teamNumber}`;
-            
-            return prisma.team.upsert({
-              where: { teamNumber },
-              create: {
-                id: teamKey,
-                teamNumber,
-                name: team.nickname || `Team ${teamNumber}`,
-                city: team.city || null,
-                stateProv: team.state_prov || null,
-                country: team.country || null,
-                rookieYear: null,
-                website: null,
-              },
-              update: {
-                name: team.nickname || `Team ${teamNumber}`,
-                city: team.city || null,
-                stateProv: team.state_prov || null,
-                country: team.country || null,
-              },
-            });
-          })
-        );
-      }
-
-      return { success: true, teamsCount: teams.length };
-    } catch (error) {
-      console.error('Error syncing teams:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    } finally {
-      await this.setSyncProgress('teams', false);
     }
+
+    if (teams.length === 0) {
+      throw new Error('No teams found from TBA API');
+    }
+    
+    // Process teams in batches to avoid overwhelming the API
+    const batchSize = 50;
+    for (let i = 0; i < teams.length; i += batchSize) {
+      const batch = teams.slice(i, i + batchSize);
+      const teamsToImport = batch.map((team: TBATeamSimple) => ({
+        teamId: `frc${team.team_number}`,
+        teamNumber: team.team_number,
+        name: team.nickname || `Team ${team.team_number}`,
+        city: team.city || undefined,
+        stateProv: team.state_prov || undefined,
+        country: team.country || undefined,
+      }));
+
+      try {
+        const results = await convex.mutation(api.teams.importTeams, {
+          teams: teamsToImport,
+        });
+
+        // Count created and updated teams
+        results.forEach((r: { action: string }) => {
+          if (r.action === 'created') result.teamsCreated++;
+          if (r.action === 'updated') result.teamsUpdated++;
+        });
+      } catch (error) {
+        result.errors.push(`Failed to process batch ${i / batchSize + 1}: ${error}`);
+      }
+    }
+
+    // Update sync state to indicate sync is complete
+    await convex.mutation(api.syncStates.upsertSyncState, {
+      type: 'teams',
+      syncInProgress: false,
+    });
+
+  } catch (error) {
+    result.errors.push(`Failed to sync teams: ${error}`);
+    
+    // Update sync state to indicate sync failed
+    await convex.mutation(api.syncStates.upsertSyncState, {
+      type: 'teams',
+      syncInProgress: false,
+    });
   }
 
-  // Add more sync methods for events, matches, etc.
-  async syncEvents(): Promise<SyncResult> {
-    // TODO: Implement event syncing
-    return { success: true, teamsCount: 0 };
-  }
+  return result;
+}
 
-  async syncMatches(): Promise<SyncResult> {
-    // TODO: Implement match syncing
-    return { success: true, teamsCount: 0 };
-  }
+// Add more sync methods for events, matches, etc.
+export async function syncEvents(): Promise<SyncResult> {
+  // TODO: Implement event syncing
+  return { teamsCreated: 0, teamsUpdated: 0, errors: [] };
+}
+
+export async function syncMatches(): Promise<SyncResult> {
+  // TODO: Implement match syncing
+  return { teamsCreated: 0, teamsUpdated: 0, errors: [] };
 } 

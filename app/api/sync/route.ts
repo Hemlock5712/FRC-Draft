@@ -1,21 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SyncService } from '@/lib/services/syncService';
+import { syncTeams, syncEvents, syncMatches, SyncResult } from '@/lib/services/syncService';
 
 export async function POST(request: NextRequest) {
   try {
-    const { type = 'teams', force = false } = await request.json();
-    const syncService = SyncService.getInstance();
+    const { type = 'teams' /*, force = false */ } = await request.json(); // force parameter removed for now
 
-    let result;
+    let result: SyncResult;
     switch (type) {
       case 'teams':
-        result = await syncService.syncTeams(force);
+        result = await syncTeams();
         break;
       case 'events':
-        result = await syncService.syncEvents();
+        result = await syncEvents();
         break;
       case 'matches':
-        result = await syncService.syncMatches();
+        result = await syncMatches();
         break;
       default:
         return NextResponse.json(
@@ -24,18 +23,23 @@ export async function POST(request: NextRequest) {
         );
     }
 
-    if (!result.success) {
+    if (result.errors.length > 0) {
+      // You might want to return a more specific error or the full result
       return NextResponse.json(
-        { error: result.error },
-        { status: 500 }
+        { message: "Sync completed with errors", errors: result.errors, created: result.teamsCreated, updated: result.teamsUpdated },
+        { status: 207 } // Multi-Status, indicating partial success
       );
     }
 
     return NextResponse.json(result);
   } catch (error) {
     console.error('Error in sync endpoint:', error);
+    let errorMessage = 'Internal server error';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    }
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: errorMessage },
       { status: 500 }
     );
   }

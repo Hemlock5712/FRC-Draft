@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { Prisma } from '@prisma/client';
+import { ConvexHttpClient } from 'convex/browser';
+import { api } from '@/convex/_generated/api';
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
 export async function GET(request: Request) {
   try {
@@ -9,46 +11,26 @@ export async function GET(request: Request) {
     const limit = parseInt(searchParams.get('limit') || '24');
     const search = searchParams.get('search') || '';
 
-    const skip = (page - 1) * limit;
+    // Call Convex query for teams with search and pagination
+    const result = await convex.query(api.teams.listTeamsWithSearchAndPagination, {
+      search,
+      paginationOpts: { numItems: limit, cursor: searchParams.get('cursor') || null },
+    });
 
-    // Build search conditions
-    const searchConditions: Prisma.TeamWhereInput = {
-      OR: [
-        { name: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
-        search && !isNaN(parseInt(search)) ? { teamNumber: parseInt(search) } : null,
-        { city: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
-        { stateProv: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
-        { country: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
-      ].filter((condition): condition is Exclude<typeof condition, null> => condition !== null),
-    };
-
-    // Get teams from database with search and pagination
-    const [teams, total] = await Promise.all([
-      prisma.team.findMany({
-        where: searchConditions,
-        orderBy: { teamNumber: 'asc' },
-        skip,
-        take: limit,
-        include: {
-          seasonData: true,
-        },
-      }),
-      prisma.team.count({
-        where: searchConditions,
-      }),
-    ]);
-
+    // Return the response matching the actual Convex query result structure
     return NextResponse.json({
-      teams,
-      total,
+      teams: result.teams,
+      totalTeams: result.totalTeams,
+      totalPages: result.totalPages,
+      currentPage: result.currentPage,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
     });
+
   } catch (error) {
     console.error('Error fetching teams:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch teams' },
+      { message: 'Failed to fetch teams' },
       { status: 500 }
     );
   }

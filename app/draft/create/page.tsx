@@ -10,6 +10,7 @@ interface DraftRoomFormData {
   maxTeams: number;
   pickTimeLimit: number;
   isSnakeDraft: boolean;
+  privacy: 'PUBLIC' | 'PRIVATE';
 }
 
 export default function CreateDraftRoom() {
@@ -24,6 +25,7 @@ export default function CreateDraftRoom() {
     maxTeams: 8,
     pickTimeLimit: 120,
     isSnakeDraft: true,
+    privacy: 'PUBLIC',
   });
 
   // Redirect to login if not authenticated
@@ -43,7 +45,14 @@ export default function CreateDraftRoom() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          name: formData.name,
+          description: formData.description,
+          maxTeams: formData.maxTeams,
+          pickTimeSeconds: formData.pickTimeLimit,
+          snakeFormat: formData.isSnakeDraft,
+          privacy: formData.privacy,
+        }),
       });
 
       if (!response.ok) {
@@ -147,6 +156,42 @@ export default function CreateDraftRoom() {
               <label htmlFor="isSnakeDraft" className="ml-2 block text-sm text-gray-700">
                 Enable Snake Draft Format
               </label>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Room Privacy
+              </label>
+              <div className="flex space-x-4">
+                <div className="flex items-center">
+                  <input
+                    type="radio"
+                    id="privacyPublic"
+                    name="privacy"
+                    value="PUBLIC"
+                    checked={formData.privacy === 'PUBLIC'}
+                    onChange={() => setFormData({ ...formData, privacy: 'PUBLIC' })}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                  />
+                  <label htmlFor="privacyPublic" className="ml-2 block text-sm text-gray-700">
+                    Public (Anyone can join)
+                  </label>
+                </div>
+                <div className="flex items-center">
+                  <input
+                    type="radio"
+                    id="privacyPrivate"
+                    name="privacy"
+                    value="PRIVATE"
+                    checked={formData.privacy === 'PRIVATE'}
+                    onChange={() => setFormData({ ...formData, privacy: 'PRIVATE' })}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                  />
+                  <label htmlFor="privacyPrivate" className="ml-2 block text-sm text-gray-700">
+                    Private (Only with invite)
+                  </label>
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center justify-end space-x-4">

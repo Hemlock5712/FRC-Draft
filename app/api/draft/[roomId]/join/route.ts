@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import prisma from '@/lib/prisma';
+import { ConvexHttpClient } from 'convex/browser';
+import { api } from '@/convex/_generated/api';
+import { Id } from '@/convex/_generated/dataModel';
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
 export async function POST(
   request: Request,
@@ -18,80 +22,26 @@ export async function POST(
       return NextResponse.json({ error: 'Room ID is required' }, { status: 400 });
     }
 
-    // Get the draft room
-    const draftRoom = await prisma.draftRoom.findUnique({
-      where: { id: roomId },
-      include: {
-        DraftParticipant: true,
-      },
-    });
-
-    if (!draftRoom) {
-      return NextResponse.json({ error: 'Draft room not found' }, { status: 404 });
-    }
-
-    // Check if room is joinable
-    if (draftRoom.status !== 'PENDING') {
-      return NextResponse.json(
-        { error: 'Can only join draft rooms that are pending' },
-        { status: 400 }
-      );
-    }
-
-    // Check if user is already a participant
-    const existingParticipant = draftRoom.DraftParticipant.find(
-      (p) => p.userId === session.user.id
-    );
-
-    if (existingParticipant) {
-      return NextResponse.json(
-        { error: 'Already a participant in this draft' },
-        { status: 400 }
-      );
-    }
-
-    // Check if room is full
-    if (draftRoom.DraftParticipant.length >= draftRoom.maxTeams) {
-      return NextResponse.json(
-        { error: 'Draft room is full' },
-        { status: 400 }
-      );
-    }
-
-    // Add user as participant
-    const participant = await prisma.draftParticipant.create({
-      data: {
+    try {
+      // Let Convex handle the validation of the ID
+      const result = await convex.mutation(api.draftRooms.joinDraftRoom, {
+        // @ts-ignore - Convex will handle the ID validation
+        roomId: roomId,
         userId: session.user.id,
-        draftRoomId: roomId,
-        pickOrder: draftRoom.DraftParticipant.length + 1,
-        isReady: false,
-      },
-      include: {
-        user: {
-          select: {
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
+      });
+      return NextResponse.json(result);
+    } catch (error: any) {
+      // Convex errors often have a `data` field with more info
+      console.error('Convex error joining draft room:', error);
+      const errorMessage = error.data?.message || error.message || 'Failed to join draft room';
+      const errorStatus = error.data?.status || 500;
+      return NextResponse.json({ error: errorMessage }, { status: errorStatus });
+    }
 
-    return NextResponse.json({
-      message: 'Successfully joined draft room',
-      participant: {
-        id: participant.id,
-        userId: participant.userId,
-        isReady: participant.isReady,
-        user: {
-          name: participant.user.name,
-          email: participant.user.email,
-        },
-      },
-    });
   } catch (error) {
-    console.error('Failed to join draft room:', error);
+    console.error('Outer error joining draft room:', error);
     return NextResponse.json(
-      { error: 'Failed to join draft room' },
+      { error: 'An unexpected error occurred' },
       { status: 500 }
     );
   }

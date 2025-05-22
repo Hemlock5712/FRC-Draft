@@ -1,5 +1,5 @@
 import cron, { ScheduledTask } from 'node-cron';
-import { SyncService } from './syncService';
+import { syncTeams } from './syncService'; // Import the syncTeams function directly
 
 export class CronService {
   private static instance: CronService;
@@ -21,18 +21,16 @@ export class CronService {
     //   return;
     // }
 
-    const syncService = SyncService.getInstance();
-
     // Sync teams every 6 hours
     this.jobs.push(
       cron.schedule('0 */6 * * *', async () => {
         console.log('Running scheduled team sync...');
         try {
-          const result = await syncService.syncTeams(true); // Force sync
-          if (result.success) {
-            console.log(`Successfully synced ${result.teamsCount} teams`);
+          const result = await syncTeams(); // Call the imported function
+          if (result.errors.length === 0) {
+            console.log(`Successfully synced ${result.teamsCreated + result.teamsUpdated} teams (${result.teamsCreated} created, ${result.teamsUpdated} updated)`);
           } else {
-            console.error('Team sync failed:', result.error);
+            console.error('Team sync failed:', result.errors);
           }
         } catch (error) {
           console.error('Error in scheduled team sync:', error);
