@@ -99,12 +99,8 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
   const [error, setError] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
 
-  // Debug log for roomId
   useEffect(() => {
-    console.log('DraftRoom - roomId:', resolvedParams?.roomId);
-    // Additional check for undefined roomId
     if (resolvedParams?.roomId === 'undefined' || !resolvedParams?.roomId) {
-      console.error('Invalid roomId detected:', resolvedParams?.roomId);
       setError('Invalid draft room ID');
       return;
     }
@@ -121,13 +117,11 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
     }
 
     if (!session?.user?.id) {
-      console.error('No user ID in session:', session);
       setError('Not authenticated');
       return;
     }
 
     if (!resolvedParams?.roomId) {
-      console.error('No room ID in params:', resolvedParams);
       setError('Room ID is required');
       return;
     }
@@ -140,7 +134,6 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
 
   const fetchDraftState = async () => {
     if (!resolvedParams?.roomId || resolvedParams.roomId === 'undefined') {
-      console.error('Invalid roomId for fetchDraftState:', resolvedParams?.roomId);
       setError('Invalid draft room ID');
       return;
     }
@@ -150,13 +143,12 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
       
       // Make the API call with explicit string conversion of roomId
       const roomId = resolvedParams.roomId.toString();
-      console.log(`Fetching draft state for room: ${roomId}`);
       
       const response = await fetch(`/api/draft/${roomId}/state`);
       
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || data.error || 'Failed to fetch draft state');
+        const errorData = await response.json();
+        throw new Error(errorData.message || errorData.error || 'Failed to fetch draft state');
       }
 
       const data = await response.json();
@@ -194,7 +186,6 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
 
   const handleJoinDraft = async () => {
     if (!resolvedParams?.roomId || resolvedParams.roomId === 'undefined') {
-      console.error('Invalid roomId for handleJoinDraft:', resolvedParams?.roomId);
       setError('Invalid draft room ID');
       return;
     }
@@ -203,7 +194,6 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
       setIsJoining(true);
       // Ensure roomId is a string
       const roomId = resolvedParams.roomId.toString();
-      console.log(`Joining draft room: ${roomId}`);
       
       const response = await fetch(`/api/draft/${roomId}/join`, {
         method: 'POST',

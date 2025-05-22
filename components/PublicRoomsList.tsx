@@ -23,16 +23,14 @@ export default function PublicRoomsList() {
   const handleJoinRoom = async (roomId: Id<"draftRooms">) => {
     if (!session?.user?.id) return;
     if (!roomId) {
-      console.error('Room ID is undefined');
       return;
     }
     
     setJoiningRoom(roomId);
     try {
       await joinRoom({ roomId, userId: session.user.id });
-      // Navigate to the room page - using string conversion to ensure it's not undefined
+      // Navigate to the room page
       const roomIdString = roomId.toString();
-      console.log('Navigating to:', `/draft/${roomIdString}`);
       router.push(`/draft/${roomIdString}`);
     } catch (error) {
       console.error('Failed to join room:', error);

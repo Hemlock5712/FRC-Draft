@@ -68,7 +68,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (session?.user?.id) {
-      console.log('Session user ID:', session.user.id);
       fetchDraftRooms();
       fetchPublicRooms();
     }
@@ -77,19 +76,16 @@ export default function Dashboard() {
   const fetchDraftRooms = async () => {
     try {
       setLoading(true);
-      console.log('Fetching draft rooms...');
       const response = await fetch('/api/draft/list');
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        console.error('Failed to fetch draft rooms:', response.status, errData);
+        console.error('Failed to fetch draft rooms:', response.status);
         throw new Error(`Failed to fetch draft rooms: ${response.status}`);
       }
       const data = await response.json();
-      console.log('Draft rooms API response:', data);
       
       // Check if data exists and has activeRooms array
       if (!data || !data.activeRooms) {
-        console.log('No activeRooms in response');
         setActiveRooms([]);
         return;
       }
@@ -109,7 +105,6 @@ export default function Dashboard() {
         ? rooms.filter((room: any) => room && (room.id || room._id)) 
         : [];
       
-      console.log('Active rooms after filtering:', validRooms);
       setActiveRooms(validRooms);
     } catch (err) {
       console.error('Error in fetchDraftRooms:', err);
@@ -122,19 +117,16 @@ export default function Dashboard() {
   const fetchPublicRooms = async () => {
     try {
       setPublicRoomsLoading(true);
-      console.log('Fetching public rooms...');
       const response = await fetch('/api/draft/public');
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        console.error('Failed to fetch public rooms:', response.status, errData);
+        console.error('Failed to fetch public rooms:', response.status);
         throw new Error(`Failed to fetch public rooms: ${response.status}`);
       }
       const data = await response.json();
-      console.log('Public rooms API response:', data);
       
       // Check if data exists and has publicRooms array
       if (!data || !data.publicRooms) {
-        console.log('No publicRooms in response');
         setPublicRooms([]);
         return;
       }
@@ -144,7 +136,6 @@ export default function Dashboard() {
         ? data.publicRooms.filter((room: any) => room && room._id) 
         : [];
       
-      console.log('Public rooms after filtering:', validPublicRooms, 'Length:', validPublicRooms.length);
       setPublicRooms(validPublicRooms);
     } catch (err) {
       console.error('Error in fetchPublicRooms:', err);
@@ -214,8 +205,7 @@ export default function Dashboard() {
         throw new Error(data.error || 'Failed to join draft room');
       }
 
-      // Navigate to the draft room - ensure roomId is a string
-      console.log('Navigating to:', `/draft/${roomId}`);
+      // Navigate to the draft room
       router.push(`/draft/${roomId}`);
     } catch (err) {
       setPublicRoomsError(err instanceof Error ? err.message : 'Failed to join draft room');
@@ -311,15 +301,6 @@ export default function Dashboard() {
                       <Link 
                         href={`/draft/${room.id}`} 
                         className="flex-1"
-                        onClick={(e) => {
-                          // Debug log and prevent default if no valid ID
-                          if (!room.id) {
-                            e.preventDefault();
-                            console.error('Draft room ID is undefined or invalid:', room);
-                          } else {
-                            console.log('Navigating to draft room:', room.id);
-                          }
-                        }}
                       >
                         <div>
                           <h3 className="text-lg font-medium text-gray-900">{room.name}</h3>
@@ -407,10 +388,8 @@ export default function Dashboard() {
                       <button
                         onClick={() => {
                           if (room._id) {
-                            console.log('Joining room:', room._id);
                             handleJoinPublicRoom(room._id);
                           } else {
-                            console.error('Room ID is undefined:', room);
                             setPublicRoomsError('Invalid room ID');
                           }
                         }}

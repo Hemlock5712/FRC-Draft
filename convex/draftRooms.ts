@@ -60,21 +60,15 @@ export const createDraftRoom = mutation({
 export const listUserDraftRooms = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
-    console.log("listUserDraftRooms called with userId:", args.userId);
-    
     // Get rooms where user is creator
     const createdRooms = await ctx.db.query("draftRooms")
       .filter(q => q.eq(q.field("createdBy"), args.userId))
       .collect();
     
-    console.log("Rooms created by user:", createdRooms.length, createdRooms);
-    
     // Get rooms where user is a participant
     const participations = await ctx.db.query("draftParticipants")
       .filter(q => q.eq(q.field("userId"), args.userId))
       .collect();
-    
-    console.log("Participations found:", participations.length, participations);
     
     const participatedRoomIds = participations.map(p => p.draftRoomId);
     
@@ -84,8 +78,6 @@ export const listUserDraftRooms = query({
       const room = await ctx.db.get(roomId as Id<"draftRooms">);
       if (room) participatedRooms.push(room);
     }
-    
-    console.log("Participated rooms:", participatedRooms.length, participatedRooms);
     
     // Combine both sets of rooms, filtering out duplicates
     const allRoomIds = new Set();
@@ -123,8 +115,6 @@ export const listUserDraftRooms = query({
       }
     }
     
-    console.log("Final activeRooms:", activeRooms.length, activeRooms);
-    
     return { activeRooms };
   },
 });
@@ -133,8 +123,6 @@ export const listUserDraftRooms = query({
 export const listPublicDraftRooms = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
-    console.log("listPublicDraftRooms called with userId:", args.userId);
-    
     // Find all public, pending draft rooms
     const publicRooms = await ctx.db.query("draftRooms")
       .filter(q => 
@@ -145,14 +133,10 @@ export const listPublicDraftRooms = query({
       )
       .collect();
     
-    console.log("Public rooms found:", publicRooms.length, publicRooms);
-    
     // Get rooms where user is already a participant
     const participations = await ctx.db.query("draftParticipants")
       .filter(q => q.eq(q.field("userId"), args.userId))
       .collect();
-    
-    console.log("User participations:", participations.length, participations);
     
     const participatedRoomIds = new Set(participations.map(p => p.draftRoomId));
     
@@ -180,8 +164,6 @@ export const listPublicDraftRooms = query({
       }
     }
     
-    console.log("Final availableRooms:", availableRooms.length, availableRooms);
-    
     return { publicRooms: availableRooms };
   },
 });
@@ -193,8 +175,6 @@ export const joinDraftRoom = mutation({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    console.log("Join draft room called with:", args);
-    
     // Get the draft room
     const draftRoom = await ctx.db.get(args.roomId);
     if (!draftRoom) {
