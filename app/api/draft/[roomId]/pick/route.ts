@@ -9,7 +9,7 @@ const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string
 
 export async function POST(
   request: Request,
-  context: { params: { roomId: string } }
+  context: { params: Promise<{ roomId: string }> }
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -17,7 +17,8 @@ export async function POST(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const { roomId } = context.params;
+    const params = await context.params;
+    const { roomId } = params;
     const { teamId } = await request.json();
 
     if (!teamId) {
@@ -31,7 +32,7 @@ export async function POST(
       const result = await convex.mutation(api.draftPicks.makePick, {
         roomId: roomId as Id<"draftRooms">,
         userId: session.user.id,
-        teamId: teamId as Id<"teams">,
+        teamId: teamId,
       });
       return NextResponse.json(result);
     } catch (error: any) {

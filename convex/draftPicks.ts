@@ -72,6 +72,16 @@ export const makePick = mutation({
       throw new Error("This team has already been drafted");
     }
     
+    // Verify that the team exists
+    const team = await ctx.db.query("teams")
+      .withIndex("by_teamId")
+      .filter(q => q.eq(q.field("teamId"), args.teamId))
+      .first();
+    
+    if (!team) {
+      throw new Error("Team not found");
+    }
+    
     // Make the pick
     const now = new Date().toISOString();
     const pickId = await ctx.db.insert("draftPicks", {
@@ -121,9 +131,20 @@ export const getDraftState = query({
       .collect();
     
     // Get all teams that haven't been picked yet
-    const pickedTeamIds = picks.map(pick => pick.teamId);
+    const pickedTeamIds = new Set(picks.map(pick => pick.teamId));
+    
+    // Use our index to get teams more efficiently
     const allTeams = await ctx.db.query("teams").collect();
-    const availableTeams = allTeams.filter(team => !pickedTeamIds.includes(team.teamId));
+    
+    // Ensure we're sending back complete team info
+    const availableTeams = allTeams
+      .filter(team => !pickedTeamIds.has(team.teamId))
+      .map(team => ({
+        _id: team._id,
+        teamId: team.teamId,
+        name: team.name,
+        teamNumber: team.teamNumber,
+      }));
     
     // Determine current drafter
     const totalParticipants = participants.length;
@@ -176,19 +197,26 @@ export const getDraftState = query({
     // Enrich picks with team and participant data
     const enrichedPicks = [];
     for (const pick of picks) {
-      const team = await ctx.db.get(pick.teamId as Id<"teams">);
+      // Use our new index to more efficiently find the team
+      const team = await ctx.db.query("teams")
+        .withIndex("by_teamId")
+        .filter(q => q.eq(q.field("teamId"), pick.teamId))
+        .first();
+      
       const participant = await ctx.db.get(pick.participantId as Id<"draftParticipants">);
       const user = participant ? await ctx.db.query("users")
         .filter(q => q.eq(q.field("_id"), participant.userId))
         .first() : null;
       
+      // Ensure we're sending back the complete team info
       enrichedPicks.push({
         ...pick,
-        team: {
-          id: team?._id,
-          name: team?.name,
-          number: team?.teamNumber,
-        },
+        team: team ? {
+          _id: team._id, 
+          teamId: team.teamId,
+          name: team.name,
+          teamNumber: team.teamNumber,
+        } : null,
         participant: {
           id: participant?._id,
           user: {

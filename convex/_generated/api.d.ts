@@ -15,6 +15,7 @@ import type {
 } from "convex/server";
 import type * as draftPicks from "../draftPicks.js";
 import type * as draftRooms from "../draftRooms.js";
+import type * as migrations from "../migrations.js";
 import type * as syncStates from "../syncStates.js";
 import type * as teams from "../teams.js";
 import type * as users from "../users.js";
@@ -30,6 +31,7 @@ import type * as users from "../users.js";
 declare const fullApi: ApiFromModules<{
   draftPicks: typeof draftPicks;
   draftRooms: typeof draftRooms;
+  migrations: typeof migrations;
   syncStates: typeof syncStates;
   teams: typeof teams;
   users: typeof users;

@@ -26,7 +26,7 @@ export async function DELETE(request: Request) {
     try {
       const result = await convex.mutation(api.draftRooms.deleteDraftRoom, {
         roomId: roomId as Id<"draftRooms">,
-        userId: session.user.id,
+        userId: session.user.id as Id<'users'>,
       });
       return NextResponse.json(result);
     } catch (error: any) {

@@ -9,7 +9,7 @@ const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string
 
 export async function GET(
   request: Request,
-  context: { params: { roomId: string } }
+  context: { params: Promise<{ roomId: string }> }
 ) {
   try {
     // 1) Authenticate
@@ -18,8 +18,9 @@ export async function GET(
       return NextResponse.json({ message: 'Not authenticated' }, { status: 401 });
     }
 
-    // 2) Validate roomId
-    const { roomId } = context.params;
+    // 2) Validate roomId - await the params
+    const params = await context.params;
+    const { roomId } = params;
     if (!roomId || roomId === 'undefined') {
       return NextResponse.json({ message: 'Invalid draft room ID' }, { status: 400 });
     }

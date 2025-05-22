@@ -10,7 +10,7 @@ export const createDraftRoom = mutation({
     maxTeams: v.number(),
     pickTimeSeconds: v.number(),
     snakeFormat: v.boolean(),
-    privacy: v.string(),
+    privacy: v.union(v.literal("PUBLIC"), v.literal("PRIVATE")),
     userId: v.string(),
   },
   handler: async (ctx, args) => {
@@ -40,13 +40,14 @@ export const createDraftRoom = mutation({
       status: "PENDING",
       createdAt: now,
       updatedAt: now,
+      nextPickOrder: 2, // Initialize to 2 since creator will be 1
     });
 
     // Add creator as first participant
     await ctx.db.insert("draftParticipants", {
       userId: args.userId,
       draftRoomId: draftRoomId,
-      pickOrder: 1,
+      pickOrder: 1, // Creator is always first
       isReady: true, // Creator is automatically ready
       createdAt: now,
       updatedAt: now,
@@ -175,7 +176,7 @@ export const joinDraftRoom = mutation({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    // Get the draft room
+    // Get the draft room with a write lock
     const draftRoom = await ctx.db.get(args.roomId);
     if (!draftRoom) {
       throw new Error("Draft room not found");
@@ -207,12 +208,47 @@ export const joinDraftRoom = mutation({
       throw new Error("Draft room is full");
     }
 
-    // Add user as participant
     const now = new Date().toISOString();
+
+    // Atomically get the next pick order and increment it
+    let pickOrder: number;
+    
+    if (draftRoom.nextPickOrder !== undefined) {
+      // Use the stored nextPickOrder if available
+      pickOrder = draftRoom.nextPickOrder;
+      await ctx.db.patch(args.roomId, {
+        nextPickOrder: pickOrder + 1,
+        updatedAt: now,
+      });
+    } else {
+      // Fall back to legacy behavior if nextPickOrder isn't set
+      pickOrder = participants.length + 1;
+      await ctx.db.patch(args.roomId, {
+        nextPickOrder: pickOrder + 1,
+        updatedAt: now,
+      });
+    }
+    
+    // Check if this pick order is already taken in this room
+    const existingParticipantWithOrder = await ctx.db.query("draftParticipants")
+      .withIndex("by_draft_room_pick_order")
+      .filter(q => 
+        q.and(
+          q.eq(q.field("draftRoomId"), args.roomId),
+          q.eq(q.field("pickOrder"), pickOrder)
+        )
+      )
+      .first();
+    
+    if (existingParticipantWithOrder) {
+      throw new Error(`Pick order ${pickOrder} is already taken in this room`);
+    }
+
+    // Add user as participant with the atomic pick order
     const participantId = await ctx.db.insert("draftParticipants", {
       userId: args.userId,
       draftRoomId: args.roomId,
-      pickOrder: participants.length + 1,
+      pickOrder: pickOrder,
       isReady: false,
       createdAt: now,
       updatedAt: now,
@@ -228,6 +264,7 @@ export const joinDraftRoom = mutation({
       participant: {
         id: participantId,
         userId: args.userId,
+        pickOrder: pickOrder,
         isReady: false,
         user: {
           name: user?.name,
@@ -235,6 +272,50 @@ export const joinDraftRoom = mutation({
         },
       },
     };
+  },
+});
+
+// Start a draft room (transition from PENDING to ACTIVE)
+export const startDraft = mutation({
+  args: {
+    roomId: v.id("draftRooms"),
+    userId: v.string(), // To verify ownership
+  },
+  handler: async (ctx, args) => {
+    // Get the draft room
+    const room = await ctx.db.get(args.roomId);
+    if (!room) {
+      throw new Error("Draft room not found");
+    }
+
+    // Verify the user is the creator of the room
+    if (room.createdBy !== args.userId) {
+      throw new Error("Only the creator can start the draft");
+    }
+
+    // Check if room is in PENDING state
+    if (room.status !== "PENDING") {
+      throw new Error("Draft can only be started from PENDING state");
+    }
+
+    // Get participants to check if there are enough
+    const participants = await ctx.db.query("draftParticipants")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", args.roomId))
+      .collect();
+
+    if (participants.length < 2) {
+      throw new Error("At least 2 participants are required to start a draft");
+    }
+
+    // Update room status to ACTIVE
+    const now = new Date().toISOString();
+    await ctx.db.patch(args.roomId, {
+      status: "ACTIVE",
+      startTime: now,
+      updatedAt: now,
+    });
+
+    return { message: "Draft started successfully" };
   },
 });
 

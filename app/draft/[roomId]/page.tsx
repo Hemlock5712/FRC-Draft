@@ -98,6 +98,10 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
+  // Calculate time remaining (if you have a timer feature)
+  let timeRemaining = 0;
+  const [timeLeft, setTimeLeft] = useState(0);
 
   useEffect(() => {
     if (resolvedParams?.roomId === 'undefined' || !resolvedParams?.roomId) {
@@ -132,6 +136,27 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
     return () => clearInterval(interval);
   }, [session, resolvedParams, status]);
 
+  useEffect(() => {
+    if (draftState?.room?.status === "ACTIVE" && draftState?.currentDrafter) {
+      // Set initial time
+      setTimeLeft(draftState.timeRemaining);
+      
+      // Create timer that updates every second
+      const timer = setInterval(() => {
+        setTimeLeft(prevTime => {
+          if (prevTime <= 0) {
+            clearInterval(timer);
+            return 0;
+          }
+          return prevTime - 1;
+        });
+      }, 1000);
+      
+      // Clean up timer
+      return () => clearInterval(timer);
+    }
+  }, [draftState?.room?.status, draftState?.timeRemaining, draftState?.currentDrafter]);
+
   const fetchDraftState = async () => {
     if (!resolvedParams?.roomId || resolvedParams.roomId === 'undefined') {
       setError('Invalid draft room ID');
@@ -162,14 +187,14 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
     }
   };
 
-  const handleTeamPick = async (team_Id: string) => {
+  const handleTeamPick = async (teamId: string) => {
     try {
       const response = await fetch(`/api/draft/${resolvedParams.roomId}/pick`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ teamId: team_Id }),
+        body: JSON.stringify({ teamId: teamId }),
       });
 
       if (!response.ok) {
@@ -210,6 +235,35 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
       setError(err instanceof Error ? err.message : 'Failed to join draft room');
     } finally {
       setIsJoining(false);
+    }
+  };
+
+  const handleStartDraft = async () => {
+    if (!resolvedParams?.roomId || resolvedParams.roomId === 'undefined') {
+      setError('Invalid draft room ID');
+      return;
+    }
+
+    try {
+      setIsStarting(true);
+      // Ensure roomId is a string
+      const roomId = resolvedParams.roomId.toString();
+      
+      const response = await fetch(`/api/draft/${roomId}/start`, {
+        method: 'POST',
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to start draft');
+      }
+
+      // Refresh draft state
+      await fetchDraftState();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start draft');
+    } finally {
+      setIsStarting(false);
     }
   };
 
@@ -257,33 +311,62 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
             <div className="text-right">
               <div className="text-sm text-gray-500">Round {draftState.currentRound}</div>
               <div className="text-sm text-gray-500">Pick {draftState.currentPickNumber}</div>
-              {draftState.timeRemaining > 0 && (
+              {draftState.room.status === "ACTIVE" && timeLeft > 0 && (
                 <div className="text-sm font-medium text-orange-600">
-                  {Math.floor(draftState.timeRemaining / 60)}:{(draftState.timeRemaining % 60).toString().padStart(2, '0')} remaining
+                  {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')} remaining
                 </div>
               )}
-              {/* Add Join button if not a participant */}
-              {!isParticipant && draftState.room.status === 'PENDING' && (
-                <button
-                  onClick={handleJoinDraft}
-                  disabled={isJoining}
-                  className={`mt-4 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 ${
-                    isJoining ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  {isJoining ? (
-                    <>
-                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Joining...
-                    </>
-                  ) : (
-                    'Join Draft'
-                  )}
-                </button>
-              )}
+              {/* Action Buttons */}
+              <div className="mt-4 space-y-2">
+                {/* Join button if not a participant */}
+                {!isParticipant && draftState.room.status === 'PENDING' && (
+                  <button
+                    onClick={handleJoinDraft}
+                    disabled={isJoining}
+                    className={`inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 ${
+                      isJoining ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    {isJoining ? (
+                      <>
+                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Joining...
+                      </>
+                    ) : (
+                      'Join Draft'
+                    )}
+                  </button>
+                )}
+
+                {/* Start button for creator when room is in PENDING status */}
+                {isParticipant && 
+                  draftState.room.status === 'PENDING' && 
+                  draftState.room.createdBy === session?.user?.id && (
+                  <button
+                    onClick={handleStartDraft}
+                    disabled={isStarting || draftState.participants.length < 2}
+                    className={`inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+                      isStarting || draftState.participants.length < 2 ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                    title={draftState.participants.length < 2 ? "At least 2 participants required" : ""}
+                  >
+                    {isStarting ? (
+                      <>
+                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Starting...
+                      </>
+                    ) : (
+                      'Start Draft'
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -331,7 +414,7 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
                 >
                   <div>
                     <div className="font-medium text-gray-900">
-                      {pick.team.teamNumber} - {pick.team.name}
+                      {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
                     </div>
                     <div className="text-sm text-gray-500">
                       Picked by {pick.participant.user.name || pick.participant.user.email}
@@ -352,7 +435,7 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
                   {draftState.availableTeams.map((team) => (
                     <button
                       key={team._id}
-                      onClick={() => handleTeamPick(team._id)}
+                      onClick={() => handleTeamPick(team.teamId)}
                       className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:shadow-md transition-all"
                     >
                       <div>

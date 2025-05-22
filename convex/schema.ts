@@ -32,6 +32,7 @@ export default defineSchema({
     createdAt: v.string(), // Date as string in ISO format
     updatedAt: v.string(), // Date as string in ISO format
   })
+  .index("by_teamId", ["teamId"])
   .index("by_teamNumber", ["teamNumber"])
   .searchIndex("search_name", {
     searchField: "name",
@@ -74,9 +75,10 @@ export default defineSchema({
     maxTeams: v.number(),
     pickTimeSeconds: v.number(),
     snakeFormat: v.boolean(),
-    privacy: v.string(), // "PUBLIC" or "PRIVATE"
+    privacy: v.union(v.literal("PUBLIC"), v.literal("PRIVATE")), // "PUBLIC" or "PRIVATE"
     createdAt: v.string(), // Date as string in ISO format
     updatedAt: v.string(), // Date as string in ISO format
+    nextPickOrder: v.optional(v.number()), // Track next available pick order (optional for backward compatibility)
   }),
 
   // Draft Participant table
@@ -87,7 +89,9 @@ export default defineSchema({
     isReady: v.boolean(),
     createdAt: v.string(), // Date as string in ISO format
     updatedAt: v.string(), // Date as string in ISO format
-  }).index("by_draft_room", ["draftRoomId"]), // Index for querying participants by room
+  })
+  .index("by_draft_room", ["draftRoomId"])
+  .index("by_draft_room_pick_order", ["draftRoomId", "pickOrder"]), // Index for enforcing unique pick orders per room
 
   // Draft Pick table
   draftPicks: defineTable({

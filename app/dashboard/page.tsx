@@ -196,7 +196,7 @@ export default function Dashboard() {
     
     setJoiningRoom(roomId);
     try {
-      const response = await fetch(`/api/draft/${roomId}/join`, {
+      const response = await fetch(`/api/draft/${encodeURIComponent(roomId)}/join`, {
         method: 'POST',
       });
 
