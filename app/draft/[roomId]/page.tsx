@@ -4,6 +4,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { use } from 'react';
+import { useWebSocket } from '@/lib/hooks/useWebSocket';
 // import type { Team, DraftRoom, DraftParticipant, DraftPick, User } from '@prisma/client'; // Prisma import removed
 
 // Define types based on Convex schema
@@ -102,6 +103,11 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
   // Calculate time remaining (if you have a timer feature)
   let timeRemaining = 0;
   const [timeLeft, setTimeLeft] = useState(0);
+  const [viewingParticipantIndex, setViewingParticipantIndex] = useState(0); // For Phase 3 item 33
+  const [showDraftCompleteModal, setShowDraftCompleteModal] = useState(false); // For Phase 3 item 31
+  
+  // Initialize WebSocket connection
+  const { socket, isConnected, joinRoom, leaveRoom, onDraftUpdate } = useWebSocket();
 
   useEffect(() => {
     if (resolvedParams?.roomId === 'undefined' || !resolvedParams?.roomId) {
@@ -130,11 +136,31 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
       return;
     }
 
+    // Initial fetch
     fetchDraftState();
-    // Set up polling for draft state
-    const interval = setInterval(fetchDraftState, 5000);
-    return () => clearInterval(interval);
-  }, [session, resolvedParams, status]);
+
+    // Join the WebSocket room
+    if (isConnected && resolvedParams.roomId) {
+      joinRoom(resolvedParams.roomId);
+    }
+
+    // Set up WebSocket event handlers
+    onDraftUpdate((update) => {
+      console.log('Draft update received:', update);
+      
+      // Refresh draft state on any update
+      if (update.roomId === resolvedParams.roomId) {
+        fetchDraftState();
+      }
+    });
+
+    // Cleanup: leave room on unmount
+    return () => {
+      if (resolvedParams?.roomId) {
+        leaveRoom(resolvedParams.roomId);
+      }
+    };
+  }, [session, resolvedParams, status, isConnected, joinRoom, leaveRoom, onDraftUpdate]);
 
   useEffect(() => {
     if (draftState?.room?.status === "ACTIVE" && draftState?.currentDrafter) {
@@ -178,6 +204,20 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
 
       const data = await response.json();
       setDraftState(data);
+      
+      // Set the viewing participant to the current user by default (Phase 3 item 33)
+      if (data.participants && session?.user?.id) {
+        const currentUserIndex = data.participants.findIndex((p: any) => p.userId === session.user.id);
+        if (currentUserIndex !== -1) {
+          setViewingParticipantIndex(currentUserIndex);
+        }
+      }
+      
+      // Check if draft is complete (Phase 3 item 31)
+      if (data.room?.status === "COMPLETED" && !showDraftCompleteModal) {
+        setShowDraftCompleteModal(true);
+      }
+      
       setError(null);
     } catch (err) {
       console.error('Error fetching draft state:', err);
@@ -371,7 +411,7 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           {/* Participants */}
           <div className="bg-white shadow-lg rounded-lg p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Participants</h2>
@@ -403,6 +443,60 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
             </div>
           </div>
 
+          {/* Participant Picks Sidebar */}
+          <div className="bg-white shadow-lg rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-gray-900">Team Picks</h2>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setViewingParticipantIndex(Math.max(0, viewingParticipantIndex - 1))}
+                  disabled={viewingParticipantIndex === 0}
+                  className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setViewingParticipantIndex(Math.min(draftState.participants.length - 1, viewingParticipantIndex + 1))}
+                  disabled={viewingParticipantIndex === draftState.participants.length - 1}
+                  className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            
+            {draftState.participants[viewingParticipantIndex] && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-3">
+                  {draftState.participants[viewingParticipantIndex].user.name || draftState.participants[viewingParticipantIndex].user.email}
+                </h3>
+                <div className="space-y-2">
+                  {draftState.picks
+                    .filter(pick => pick.participantId === draftState.participants[viewingParticipantIndex]._id)
+                    .map((pick) => (
+                      <div key={pick._id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                        <div>
+                          <div className="font-medium text-sm text-gray-900">
+                            {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Pick #{pick.pickNumber}
+                        </div>
+                      </div>
+                    ))}
+                  {draftState.picks.filter(pick => pick.participantId === draftState.participants[viewingParticipantIndex]._id).length === 0 && (
+                    <div className="text-sm text-gray-500 italic">No picks yet</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Draft Board */}
           <div className="lg:col-span-2 bg-white shadow-lg rounded-lg p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Draft Board</h2>
@@ -428,29 +522,113 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
             </div>
 
             {/* Available Teams */}
-            {draftState.isMyTurn && (
+            {draftState.isMyTurn && draftState.room.status !== "COMPLETED" && (
               <div className="mt-8">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Available Teams</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {draftState.availableTeams.map((team) => (
-                    <button
-                      key={team._id}
-                      onClick={() => handleTeamPick(team.teamId)}
-                      className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:shadow-md transition-all"
-                    >
-                      <div>
-                        <div className="font-medium text-gray-900">
-                          {team.teamNumber} - {team.name}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
+                <div className="overflow-hidden border border-gray-200 rounded-lg">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Team #
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Team Name
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Weeks Competing
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Avg Points/Event
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Action
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {draftState.availableTeams.map((team) => (
+                        <tr 
+                          key={team._id}
+                          className="hover:bg-gray-50 cursor-pointer"
+                          onClick={() => handleTeamPick(team.teamId)}
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {team.teamNumber}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {team.name}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            0
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            0
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleTeamPick(team.teamId);
+                              }}
+                              className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                            >
+                              Pick
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Draft Complete Modal (Phase 3 item 31) */}
+      {showDraftCompleteModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3 text-center">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">
+                🎉 Draft Complete!
+              </h3>
+              <div className="mt-2 px-7 py-3">
+                <p className="text-sm text-gray-500 mb-4">
+                  Here are your picks:
+                </p>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {draftState?.picks
+                    .filter(pick => pick.participant.user.name === session?.user?.name || pick.participant.user.email === session?.user?.email)
+                    .map((pick) => (
+                      <div key={pick._id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                        <div className="text-sm font-medium text-gray-900">
+                          {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Pick #{pick.pickNumber}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+              <div className="items-center px-4 py-3">
+                <button
+                  onClick={() => {
+                    setShowDraftCompleteModal(false);
+                    router.push('/dashboard');
+                  }}
+                  className="px-4 py-2 bg-blue-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                >
+                  Go to Dashboard
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

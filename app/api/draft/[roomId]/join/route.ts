@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@/convex/_generated/api';
+import { getIO } from '@/pages/api/socket';
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
@@ -29,6 +30,22 @@ export async function POST(
         roomId: roomId,
         userId: session.user.id,
       });
+
+      // Broadcast join update to all clients in the room
+      const io = getIO();
+      if (io) {
+        io.to(`draft-${roomId}`).emit('draft-update', {
+          type: 'USER_JOINED',
+          roomId,
+          data: {
+            userId: session.user.id,
+            userName: session.user.name,
+            userEmail: session.user.email,
+            pickOrder: result.participant?.pickOrder,
+          }
+        });
+      }
+
       return NextResponse.json(result);
     } catch (error: any) {
       // Convex errors often have a `data` field with more info
