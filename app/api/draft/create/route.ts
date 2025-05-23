@@ -20,7 +20,7 @@ export async function POST(request: Request) {
 
     // Parse request body
     const body = await request.json();
-    const { name, description, maxTeams, pickTimeSeconds, snakeFormat, privacy } = body;
+    const { name, description, maxTeams, pickTimeSeconds, snakeFormat, privacy, numberOfRounds, teamsToStart } = body;
 
     // Validate required fields
     if (!name) {
@@ -37,9 +37,30 @@ export async function POST(request: Request) {
       );
     }
 
+    if (maxTeams % 2 !== 0) {
+      return NextResponse.json(
+        { message: 'Maximum teams must be an even number' },
+        { status: 400 }
+      );
+    }
+
     if (pickTimeSeconds < 30 || pickTimeSeconds > 300) {
       return NextResponse.json(
         { message: 'Pick time must be between 30 and 300 seconds' },
+        { status: 400 }
+      );
+    }
+
+    if (numberOfRounds < 1 || numberOfRounds > 20) {
+      return NextResponse.json(
+        { message: 'Number of rounds must be between 1 and 20' },
+        { status: 400 }
+      );
+    }
+
+    if (teamsToStart < 1 || teamsToStart > 15) {
+      return NextResponse.json(
+        { message: 'Teams to start must be between 1 and 15' },
         { status: 400 }
       );
     }
@@ -52,6 +73,8 @@ export async function POST(request: Request) {
       pickTimeSeconds,
       snakeFormat,
       privacy: privacy || "PUBLIC", // Default to PUBLIC if not specified
+      numberOfRounds: numberOfRounds || 8, // Default to 8 rounds
+      teamsToStart: teamsToStart || 5, // Default to 5 teams to start
       userId: session.user.id,
     });
 

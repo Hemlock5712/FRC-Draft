@@ -251,4 +251,62 @@ export const getDraftState = query({
       timeRemaining,
     };
   },
+});
+
+// Get draft picks for a specific room (for pick history)
+export const getDraftPicks = query({
+  args: {
+    roomId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Convert string roomId to Id<"draftRooms">
+    const roomIdAsId = args.roomId as Id<"draftRooms">;
+    
+    // Get the draft room to verify it exists
+    const room = await ctx.db.get(roomIdAsId);
+    if (!room) {
+      throw new Error("Draft room not found");
+    }
+    
+    // Get all picks for this room
+    const picks = await ctx.db.query("draftPicks")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", roomIdAsId))
+      .collect();
+    
+    // Enrich picks with team and participant data
+    const enrichedPicks = [];
+    for (const pick of picks) {
+      // Get team data
+      const team = await ctx.db.query("teams")
+        .withIndex("by_teamId")
+        .filter(q => q.eq(q.field("teamId"), pick.teamId))
+        .first();
+      
+      // Get participant data
+      const participant = await ctx.db.get(pick.participantId as Id<"draftParticipants">);
+      const user = participant ? await ctx.db.query("users")
+        .filter(q => q.eq(q.field("_id"), participant.userId))
+        .first() : null;
+      
+      enrichedPicks.push({
+        ...pick,
+        team: team ? {
+          _id: team._id, 
+          teamId: team.teamId,
+          name: team.name,
+          teamNumber: team.teamNumber,
+        } : null,
+        participant: {
+          _id: participant?._id,
+          user: {
+            name: user?.name,
+            email: user?.email,
+          },
+        },
+      });
+    }
+    
+    // Sort picks by pick number
+    return enrichedPicks.sort((a, b) => a.pickNumber - b.pickNumber);
+  },
 }); 

@@ -21,10 +21,10 @@ export class CronService {
     //   return;
     // }
 
-    // Sync teams every 6 hours
+    // Sync teams every week (Sunday at 2 AM)
     this.jobs.push(
-      cron.schedule('0 */6 * * *', async () => {
-        console.log('Running scheduled team sync...');
+      cron.schedule('0 2 * * 0', async () => {
+        console.log('Running weekly scheduled team sync...');
         try {
           const result = await syncTeams(); // Call the imported function
           if (result.errors.length === 0) {
@@ -33,7 +33,7 @@ export class CronService {
             console.error('Team sync failed:', result.errors);
           }
         } catch (error) {
-          console.error('Error in scheduled team sync:', error);
+          console.error('Error in weekly scheduled team sync:', error);
         }
       })
     );

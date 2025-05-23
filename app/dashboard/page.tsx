@@ -59,6 +59,8 @@ export default function Dashboard() {
   const [publicRoomsError, setPublicRoomsError] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
   const [joiningRoom, setJoiningRoom] = useState<string | null>(null);
+  const [showPickHistory, setShowPickHistory] = useState<string | null>(null);
+  const [pickHistory, setPickHistory] = useState<any[]>([]);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -202,15 +204,41 @@ export default function Dashboard() {
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Failed to join draft room');
+        throw new Error(data.message || 'Failed to join draft room');
       }
 
-      // Navigate to the draft room
-      router.push(`/draft/${roomId}`);
+      // Refresh the rooms list
+      await fetchDraftRooms();
+      await fetchPublicRooms();
     } catch (err) {
       setPublicRoomsError(err instanceof Error ? err.message : 'Failed to join draft room');
     } finally {
       setJoiningRoom(null);
+    }
+  };
+
+  // Function to fetch pick history for completed drafts (Phase 3 item 34)
+  const fetchPickHistory = async (roomId: string) => {
+    try {
+      const response = await fetch(`/api/draft/${roomId}/picks`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch pick history');
+      }
+      const data = await response.json();
+      setPickHistory(data.picks || []);
+      setShowPickHistory(roomId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch pick history');
+    }
+  };
+
+  // Function to handle clicking on draft rooms (Phase 3 item 34)
+  const handleDraftRoomClick = (room: DraftRoom, e: React.MouseEvent) => {
+    e.preventDefault();
+    if (room.status === 'COMPLETED') {
+      fetchPickHistory(room.id);
+    } else {
+      router.push(`/draft/${room.id}`);
     }
   };
 
@@ -298,9 +326,9 @@ export default function Dashboard() {
                 <div key={`active-${room.id}`} className="block hover:bg-gray-50 transition-colors">
                   <div className="px-6 py-4">
                     <div className="flex items-center justify-between">
-                      <Link 
-                        href={`/draft/${room.id}`} 
-                        className="flex-1"
+                      <div 
+                        className="flex-1 cursor-pointer"
+                        onClick={(e) => handleDraftRoomClick(room, e)}
                       >
                         <div>
                           <h3 className="text-lg font-medium text-gray-900">{room.name}</h3>
@@ -315,7 +343,7 @@ export default function Dashboard() {
                           <span>•</span>
                           <span>Created by {room.creator.name || room.creator.email}</span>
                         </div>
-                      </Link>
+                      </div>
                       <div className="flex items-center space-x-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(room.status)}`}>
                           {room.status}
@@ -386,7 +414,7 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <button
-                        onClick={() => {
+                        onClick={(e) => {
                           if (room._id) {
                             handleJoinPublicRoom(room._id);
                           } else {
@@ -412,6 +440,75 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Pick History Modal (Phase 3 item 34) */}
+      {showPickHistory && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-4/5 max-w-4xl shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-gray-900">
+                  Draft Pick History
+                </h3>
+                <button
+                  onClick={() => setShowPickHistory(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="mt-2">
+                <div className="overflow-hidden border border-gray-200 rounded-lg">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Pick #
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Round
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Team
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Picked By
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Time
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {pickHistory.map((pick) => (
+                        <tr key={pick._id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {pick.pickNumber}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {pick.roundNumber}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {pick.participant?.user?.name || pick.participant?.user?.email || 'Unknown'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(pick.pickedAt).toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

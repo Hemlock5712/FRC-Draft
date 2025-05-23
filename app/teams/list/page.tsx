@@ -63,7 +63,22 @@ export default function TeamsListPage() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        
+        if (response.status === 429) {
+          // Rate limit exceeded
+          const retryAfter = errorData.retryAfter || 60;
+          throw new Error(`Please wait ${retryAfter} seconds before syncing again.`);
+        }
+        
         throw new Error(errorData.error || 'Failed to sync teams');
+      }
+
+      const result = await response.json();
+      
+      // Show success message
+      if (result.teamsCreated || result.teamsUpdated) {
+        setError(`✅ Sync successful! Created: ${result.teamsCreated || 0}, Updated: ${result.teamsUpdated || 0}`);
+        setTimeout(() => setError(null), 5000); // Clear success message after 5 seconds
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sync teams');

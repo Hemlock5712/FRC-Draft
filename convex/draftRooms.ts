@@ -11,6 +11,8 @@ export const createDraftRoom = mutation({
     pickTimeSeconds: v.number(),
     snakeFormat: v.boolean(),
     privacy: v.union(v.literal("PUBLIC"), v.literal("PRIVATE")),
+    numberOfRounds: v.number(),
+    teamsToStart: v.number(),
     userId: v.string(),
   },
   handler: async (ctx, args) => {
@@ -23,8 +25,20 @@ export const createDraftRoom = mutation({
       throw new Error("Maximum teams must be between 2 and 32");
     }
 
+    if (args.maxTeams % 2 !== 0) {
+      throw new Error("Maximum teams must be an even number");
+    }
+
     if (args.pickTimeSeconds < 30 || args.pickTimeSeconds > 300) {
       throw new Error("Pick time must be between 30 and 300 seconds");
+    }
+
+    if (args.numberOfRounds < 1 || args.numberOfRounds > 20) {
+      throw new Error("Number of rounds must be between 1 and 20");
+    }
+
+    if (args.teamsToStart < 1 || args.teamsToStart > 15) {
+      throw new Error("Teams to start must be between 1 and 15");
     }
 
     // Create the draft room
@@ -36,6 +50,8 @@ export const createDraftRoom = mutation({
       pickTimeSeconds: args.pickTimeSeconds,
       snakeFormat: args.snakeFormat,
       privacy: args.privacy || "PUBLIC", // Default to PUBLIC if not specified
+      numberOfRounds: args.numberOfRounds,
+      teamsToStart: args.teamsToStart,
       createdBy: args.userId,
       status: "PENDING",
       createdAt: now,

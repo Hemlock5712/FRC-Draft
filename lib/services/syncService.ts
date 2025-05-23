@@ -19,6 +19,30 @@ export async function syncTeams(): Promise<SyncResult> {
   };
 
   try {
+    // Check if a recent sync has occurred
+    const syncState = await convex.query(api.syncStates.getSyncState, {
+      type: 'teams'
+    });
+
+    // Prevent syncing if last sync was within the last hour (unless this is a cron job)
+    const MIN_SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour in milliseconds
+    if (syncState?.lastSyncTime) {
+      const lastSyncTime = new Date(syncState.lastSyncTime).getTime();
+      const now = Date.now();
+      
+      if (now - lastSyncTime < MIN_SYNC_INTERVAL) {
+        const minutesUntilNext = Math.ceil((MIN_SYNC_INTERVAL - (now - lastSyncTime)) / (60 * 1000));
+        result.errors.push(`Teams were synced recently. Please wait ${minutesUntilNext} minutes before syncing again.`);
+        return result;
+      }
+    }
+
+    // Check if sync is already in progress
+    if (syncState?.syncInProgress) {
+      result.errors.push('Team sync is already in progress. Please wait for it to complete.');
+      return result;
+    }
+
     // Update sync state to indicate sync is in progress
     await convex.mutation(api.syncStates.upsertSyncState, {
       type: 'teams',

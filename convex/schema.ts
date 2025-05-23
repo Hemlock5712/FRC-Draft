@@ -76,6 +76,8 @@ export default defineSchema({
     pickTimeSeconds: v.number(),
     snakeFormat: v.boolean(),
     privacy: v.union(v.literal("PUBLIC"), v.literal("PRIVATE")), // "PUBLIC" or "PRIVATE"
+    numberOfRounds: v.number(), // Number of draft rounds
+    teamsToStart: v.number(), // Number of teams each participant needs to start
     createdAt: v.string(), // Date as string in ISO format
     updatedAt: v.string(), // Date as string in ISO format
     nextPickOrder: v.optional(v.number()), // Track next available pick order (optional for backward compatibility)
