@@ -248,4 +248,30 @@ export default defineSchema({
   .index("by_user_draft", ["userId", "draftRoomId"])
   .index("by_draft_room", ["draftRoomId"])
   .index("by_team", ["teamId"]),
+
+  // ===== PHASE 5: LEAGUE MANAGEMENT & SCORING TABLES =====
+
+  // League Weekly Scores - tracks weekly fantasy scores for each user in each league
+  leagueWeeklyScores: defineTable({
+    draftRoomId: v.string(), // Reference to draft room/league
+    userId: v.string(), // Reference to user
+    year: v.number(),
+    week: v.number(),
+    
+    // Weekly scoring
+    weeklyPoints: v.number(), // Total points earned this week
+    startingTeamCount: v.number(), // Number of teams in starting lineup
+    teamScores: v.array(v.object({
+      teamId: v.string(),
+      points: v.number(),
+    })), // Individual team contributions
+    
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+  .index("by_league_year", ["draftRoomId", "year"])
+  .index("by_league_year_week", ["draftRoomId", "year", "week"])
+  .index("by_league_user_week", ["draftRoomId", "userId", "year", "week"])
+  .index("by_league_user_year", ["draftRoomId", "userId", "year"])
+  .index("by_user_year", ["userId", "year"]),
 }); 

@@ -370,6 +370,18 @@ export default function Dashboard() {
                           {room.privacy === 'PUBLIC' ? 'Public' : 'Private'}
                         </span>
                         
+                        {/* League Analytics Button - Show for all completed drafts */}
+                        <Link
+                          href={`/league/${room.id}`}
+                          className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                          title="View league analytics and standings"
+                        >
+                          <svg className="h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          Analytics
+                        </Link>
+
                         {/* Roster Management Button - Always show for completed drafts where user is a participant */}
                         {room.DraftParticipant.some(p => 
                           p.user && session?.user && (
