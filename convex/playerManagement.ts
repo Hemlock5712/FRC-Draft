@@ -893,4 +893,793 @@ export const getTeamProjections = query({
       eventCount: performances.length,
     };
   },
+});
+
+// ===== PHASE 6: ADVANCED FEATURES & INTEGRATIONS =====
+
+// Get user's draft rooms for trading interface
+export const getUserDraftRoomsForTrading = query({
+  args: {
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Get all draft rooms where user is a participant
+    const participations = await ctx.db
+      .query("draftParticipants")
+      .filter(q => q.eq(q.field("userId"), args.userId))
+      .collect();
+    
+    const draftRooms = [];
+    for (const participation of participations) {
+      const draftRoom = await ctx.db.get(participation.draftRoomId as Id<"draftRooms">);
+      if (draftRoom && draftRoom.status === "COMPLETED") {
+        draftRooms.push({
+          _id: draftRoom._id,
+          name: draftRoom.name,
+          status: draftRoom.status,
+        });
+      }
+    }
+    
+    return draftRooms;
+  },
+});
+
+// Get participants in a draft room for trading
+export const getDraftRoomParticipants = query({
+  args: {
+    draftRoomId: v.string(),
+    excludeUserId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const participants = await ctx.db
+      .query("draftParticipants")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", args.draftRoomId))
+      .collect();
+    
+    const enrichedParticipants = [];
+    for (const participant of participants) {
+      if (args.excludeUserId && participant.userId === args.excludeUserId) {
+        continue; // Skip the current user
+      }
+      
+      const user = await ctx.db.get(participant.userId as Id<"users">);
+      if (user) {
+        enrichedParticipants.push({
+          userId: participant.userId,
+          name: user.name || user.email || 'Unknown User',
+          email: user.email,
+        });
+      }
+    }
+    
+    return enrichedParticipants;
+  },
+});
+
+// Get user's teams in a specific draft room for trading
+export const getUserTeamsForTrading = query({
+  args: {
+    userId: v.string(),
+    draftRoomId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const rosterEntries = await ctx.db
+      .query("playerRosters")
+      .withIndex("by_user_draft", q => 
+        q.eq("userId", args.userId).eq("draftRoomId", args.draftRoomId)
+      )
+      .collect();
+    
+    const teams = [];
+    for (const entry of rosterEntries) {
+      const team = await ctx.db
+        .query("teams")
+        .withIndex("by_teamId", q => q.eq("teamId", entry.teamId))
+        .first();
+      
+      if (team) {
+        teams.push({
+          teamId: entry.teamId,
+          teamNumber: team.teamNumber,
+          name: team.name,
+          isStarting: entry.isStarting,
+        });
+      }
+    }
+    
+    return teams.sort((a, b) => a.teamNumber - b.teamNumber);
+  },
+});
+
+// Real-time data sync from The Blue Alliance
+export const syncTBAData = mutation({
+  args: {
+    year: v.number(),
+    eventKey: v.optional(v.string()),
+    forceSync: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const now = new Date().toISOString();
+    
+    // Check if sync is already in progress
+    const existingSync = await ctx.db
+      .query("syncStates")
+      .filter(q => q.eq(q.field("type"), `tba_sync_${args.year}`))
+      .first();
+    
+    if (existingSync?.syncInProgress && !args.forceSync) {
+      throw new Error("Sync already in progress for this year");
+    }
+    
+    // Create or update sync state
+    const syncStateData = {
+      type: `tba_sync_${args.year}`,
+      lastSyncTime: now,
+      syncInProgress: true,
+      updatedAt: now,
+    };
+    
+    if (existingSync) {
+      await ctx.db.patch(existingSync._id, syncStateData);
+    } else {
+      await ctx.db.insert("syncStates", {
+        ...syncStateData,
+        createdAt: now,
+      });
+    }
+    
+    // Note: In a real implementation, this would trigger external API calls
+    // For now, we'll just mark the sync as complete
+    // TODO: Implement actual TBA API integration
+    
+    return { message: `TBA sync initiated for year ${args.year}`, syncId: existingSync?._id };
+  },
+});
+
+// Trading system - initiate a trade between users
+export const initiateTrade = mutation({
+  args: {
+    fromUserId: v.string(),
+    toUserId: v.string(),
+    draftRoomId: v.string(),
+    offeredTeamIds: v.array(v.string()),
+    requestedTeamIds: v.array(v.string()),
+    message: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = new Date().toISOString();
+    
+    // Validate that both users are in the same draft room
+    const fromParticipant = await ctx.db
+      .query("draftParticipants")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", args.draftRoomId))
+      .filter(q => q.eq(q.field("userId"), args.fromUserId))
+      .first();
+    
+    const toParticipant = await ctx.db
+      .query("draftParticipants")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", args.draftRoomId))
+      .filter(q => q.eq(q.field("userId"), args.toUserId))
+      .first();
+    
+    if (!fromParticipant || !toParticipant) {
+      throw new Error("Both users must be participants in the same draft room");
+    }
+    
+    // Validate that the offering user owns the offered teams
+    for (const teamId of args.offeredTeamIds) {
+      const roster = await ctx.db
+        .query("playerRosters")
+        .withIndex("by_user_draft", q => 
+          q.eq("userId", args.fromUserId).eq("draftRoomId", args.draftRoomId)
+        )
+        .filter(q => q.eq(q.field("teamId"), teamId))
+        .first();
+      
+      if (!roster) {
+        throw new Error(`User does not own team ${teamId}`);
+      }
+    }
+    
+    // Validate that the target user owns the requested teams
+    for (const teamId of args.requestedTeamIds) {
+      const roster = await ctx.db
+        .query("playerRosters")
+        .withIndex("by_user_draft", q => 
+          q.eq("userId", args.toUserId).eq("draftRoomId", args.draftRoomId)
+        )
+        .filter(q => q.eq(q.field("teamId"), teamId))
+        .first();
+      
+      if (!roster) {
+        throw new Error(`Target user does not own team ${teamId}`);
+      }
+    }
+    
+    // Create trade proposal
+    const tradeId = await ctx.db.insert("tradeProposals", {
+      fromUserId: args.fromUserId,
+      toUserId: args.toUserId,
+      draftRoomId: args.draftRoomId,
+      offeredTeamIds: args.offeredTeamIds,
+      requestedTeamIds: args.requestedTeamIds,
+      message: args.message,
+      status: "PENDING",
+      createdAt: now,
+      updatedAt: now,
+    });
+    
+    return tradeId;
+  },
+});
+
+// Accept or reject a trade proposal
+export const respondToTrade = mutation({
+  args: {
+    tradeId: v.id("tradeProposals"),
+    userId: v.string(),
+    action: v.union(v.literal("ACCEPT"), v.literal("REJECT")),
+  },
+  handler: async (ctx, args) => {
+    const now = new Date().toISOString();
+    
+    const trade = await ctx.db.get(args.tradeId);
+    if (!trade) {
+      throw new Error("Trade proposal not found");
+    }
+    
+    if (trade.toUserId !== args.userId) {
+      throw new Error("Only the recipient can respond to this trade");
+    }
+    
+    if (trade.status !== "PENDING") {
+      throw new Error("Trade proposal is no longer pending");
+    }
+    
+    if (args.action === "REJECT") {
+      await ctx.db.patch(args.tradeId, {
+        status: "REJECTED",
+        updatedAt: now,
+      });
+      return { success: true, message: "Trade rejected" };
+    }
+    
+    // Accept trade - swap team ownership
+    for (const teamId of trade.offeredTeamIds) {
+      const roster = await ctx.db
+        .query("playerRosters")
+        .withIndex("by_user_draft", q => 
+          q.eq("userId", trade.fromUserId).eq("draftRoomId", trade.draftRoomId)
+        )
+        .filter(q => q.eq(q.field("teamId"), teamId))
+        .first();
+      
+      if (roster) {
+        await ctx.db.patch(roster._id, {
+          userId: trade.toUserId,
+          acquisitionType: "trade",
+          acquisitionDate: now,
+          updatedAt: now,
+        });
+      }
+    }
+    
+    for (const teamId of trade.requestedTeamIds) {
+      const roster = await ctx.db
+        .query("playerRosters")
+        .withIndex("by_user_draft", q => 
+          q.eq("userId", trade.toUserId).eq("draftRoomId", trade.draftRoomId)
+        )
+        .filter(q => q.eq(q.field("teamId"), teamId))
+        .first();
+      
+      if (roster) {
+        await ctx.db.patch(roster._id, {
+          userId: trade.fromUserId,
+          acquisitionType: "trade",
+          acquisitionDate: now,
+          updatedAt: now,
+        });
+      }
+    }
+    
+    await ctx.db.patch(args.tradeId, {
+      status: "ACCEPTED",
+      updatedAt: now,
+    });
+    
+    return { success: true, message: "Trade completed successfully" };
+  },
+});
+
+// Waiver wire system - add team to waiver wire
+export const addToWaiverWire = mutation({
+  args: {
+    userId: v.string(),
+    draftRoomId: v.string(),
+    teamId: v.string(),
+    priority: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = new Date().toISOString();
+    
+    // Check if team is already on waiver wire
+    const existingWaiver = await ctx.db
+      .query("waiverClaims")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", args.draftRoomId))
+      .filter(q => 
+        q.and(
+          q.eq(q.field("teamId"), args.teamId),
+          q.eq(q.field("status"), "PENDING")
+        )
+      )
+      .first();
+    
+    if (existingWaiver) {
+      throw new Error("Team is already on waiver wire");
+    }
+    
+    // Get user's current waiver priority
+    const userPriority = args.priority || await getUserWaiverPriority(ctx, args.userId, args.draftRoomId);
+    
+    const waiverClaimId = await ctx.db.insert("waiverClaims", {
+      userId: args.userId,
+      draftRoomId: args.draftRoomId,
+      teamId: args.teamId,
+      priority: userPriority,
+      status: "PENDING",
+      claimType: "ADD",
+      createdAt: now,
+      updatedAt: now,
+    });
+    
+    return waiverClaimId;
+  },
+});
+
+// Process waiver wire claims (typically run on a schedule)
+export const processWaiverClaims = mutation({
+  args: {
+    draftRoomId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = new Date().toISOString();
+    
+    // Get all pending waiver claims for this draft room, ordered by priority
+    const pendingClaims = await ctx.db
+      .query("waiverClaims")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", args.draftRoomId))
+      .filter(q => q.eq(q.field("status"), "PENDING"))
+      .collect();
+    
+    // Sort by priority (lower number = higher priority)
+    const sortedClaims = pendingClaims.sort((a, b) => a.priority - b.priority);
+    
+    const processedClaims = [];
+    
+    for (const claim of sortedClaims) {
+      try {
+        if (claim.claimType === "ADD") {
+          // Check if team is still available (not on anyone's roster)
+          const existingRoster = await ctx.db
+            .query("playerRosters")
+            .withIndex("by_draft_room", q => q.eq("draftRoomId", args.draftRoomId))
+            .filter(q => q.eq(q.field("teamId"), claim.teamId))
+            .first();
+          
+          if (!existingRoster) {
+            // Add team to user's roster
+            await ctx.db.insert("playerRosters", {
+              userId: claim.userId,
+              draftRoomId: claim.draftRoomId,
+              teamId: claim.teamId,
+              isStarting: false,
+              acquisitionType: "waiver",
+              acquisitionDate: now,
+              totalPointsScored: 0,
+              weeksStarted: 0,
+              createdAt: now,
+              updatedAt: now,
+            });
+            
+            await ctx.db.patch(claim._id, {
+              status: "APPROVED",
+              updatedAt: now,
+            });
+            
+            processedClaims.push({ claimId: claim._id, status: "APPROVED" });
+          } else {
+            await ctx.db.patch(claim._id, {
+              status: "REJECTED",
+              updatedAt: now,
+            });
+            
+            processedClaims.push({ claimId: claim._id, status: "REJECTED" });
+          }
+        }
+      } catch (error) {
+        await ctx.db.patch(claim._id, {
+          status: "ERROR",
+          updatedAt: now,
+        });
+        
+        processedClaims.push({ claimId: claim._id, status: "ERROR" });
+      }
+    }
+    
+    return processedClaims;
+  },
+});
+
+// Helper function to get user's waiver priority
+async function getUserWaiverPriority(ctx: any, userId: string, draftRoomId: string): Promise<number> {
+  // Get user's current standings (lower rank = higher waiver priority)
+  const standings = await ctx.db
+    .query("leagueWeeklyScores")
+    .withIndex("by_league_year", (q: any) => q.eq("draftRoomId", draftRoomId).eq("year", 2024))
+    .collect();
+  
+  // Group by user and calculate totals
+  const userTotals = new Map<string, number>();
+  for (const score of standings) {
+    const existing = userTotals.get(score.userId) || 0;
+    userTotals.set(score.userId, existing + score.weeklyPoints);
+  }
+  
+  // Sort by total points (ascending for waiver priority)
+  const sortedUsers = Array.from(userTotals.entries())
+    .sort((a, b) => a[1] - b[1]);
+  
+  const userIndex = sortedUsers.findIndex(([id]) => id === userId);
+  return userIndex >= 0 ? userIndex + 1 : 999; // Default to low priority if not found
+}
+
+// Notification system - create notification
+export const createNotification = mutation({
+  args: {
+    userId: v.string(),
+    type: v.string(),
+    title: v.string(),
+    message: v.string(),
+    data: v.optional(v.any()),
+    priority: v.optional(v.union(v.literal("LOW"), v.literal("MEDIUM"), v.literal("HIGH"))),
+  },
+  handler: async (ctx, args) => {
+    const now = new Date().toISOString();
+    
+    const notificationId = await ctx.db.insert("notifications", {
+      userId: args.userId,
+      type: args.type,
+      title: args.title,
+      message: args.message,
+      data: args.data,
+      priority: args.priority || "MEDIUM",
+      isRead: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    
+    return notificationId;
+  },
+});
+
+// Get user notifications
+export const getUserNotifications = query({
+  args: {
+    userId: v.string(),
+    limit: v.optional(v.number()),
+    unreadOnly: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit || 50;
+    
+    let query = ctx.db
+      .query("notifications")
+      .withIndex("by_user", q => q.eq("userId", args.userId));
+    
+    if (args.unreadOnly) {
+      query = query.filter(q => q.eq(q.field("isRead"), false));
+    }
+    
+    const notifications = await query
+      .order("desc")
+      .take(limit);
+    
+    return notifications;
+  },
+});
+
+// Mark notification as read
+export const markNotificationRead = mutation({
+  args: {
+    notificationId: v.id("notifications"),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const notification = await ctx.db.get(args.notificationId);
+    
+    if (!notification || notification.userId !== args.userId) {
+      throw new Error("Notification not found or access denied");
+    }
+    
+    await ctx.db.patch(args.notificationId, {
+      isRead: true,
+      updatedAt: new Date().toISOString(),
+    });
+    
+    return true;
+  },
+});
+
+// Advanced analytics - get league insights
+export const getLeagueInsights = query({
+  args: {
+    draftRoomId: v.string(),
+    year: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Get all league data
+    const weeklyScores = await ctx.db
+      .query("leagueWeeklyScores")
+      .withIndex("by_league_year", q => 
+        q.eq("draftRoomId", args.draftRoomId).eq("year", args.year)
+      )
+      .collect();
+    
+    const trades = await ctx.db
+      .query("tradeProposals")
+      .filter(q => 
+        q.and(
+          q.eq(q.field("draftRoomId"), args.draftRoomId),
+          q.eq(q.field("status"), "ACCEPTED")
+        )
+      )
+      .collect();
+    
+    const waiverClaims = await ctx.db
+      .query("waiverClaims")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", args.draftRoomId))
+      .filter(q => q.eq(q.field("status"), "APPROVED"))
+      .collect();
+    
+    // Calculate insights
+    const totalTrades = trades.length;
+    const totalWaiverClaims = waiverClaims.length;
+    const activeUsers = new Set(weeklyScores.map(s => s.userId)).size;
+    
+    // Most active trader
+    const tradeActivity = new Map<string, number>();
+    for (const trade of trades) {
+      tradeActivity.set(trade.fromUserId, (tradeActivity.get(trade.fromUserId) || 0) + 1);
+      tradeActivity.set(trade.toUserId, (tradeActivity.get(trade.toUserId) || 0) + 1);
+    }
+    
+    const mostActiveTrader = Array.from(tradeActivity.entries())
+      .sort((a, b) => b[1] - a[1])[0];
+    
+    // League activity score (trades + waiver claims per user)
+    const activityScore = (totalTrades + totalWaiverClaims) / Math.max(activeUsers, 1);
+    
+    return {
+      totalTrades,
+      totalWaiverClaims,
+      activeUsers,
+      mostActiveTrader: mostActiveTrader ? {
+        userId: mostActiveTrader[0],
+        tradeCount: mostActiveTrader[1],
+      } : null,
+      activityScore: Math.round(activityScore * 100) / 100,
+      engagementLevel: activityScore > 2 ? "HIGH" : activityScore > 1 ? "MEDIUM" : "LOW",
+    };
+  },
+});
+
+// Mobile API - get dashboard summary for mobile apps
+export const getMobileDashboard = query({
+  args: {
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Get user's active leagues
+    const userParticipations = await ctx.db
+      .query("draftParticipants")
+      .filter(q => q.eq(q.field("userId"), args.userId))
+      .collect();
+    
+    const activeLeagues = [];
+    for (const participation of userParticipations) {
+      const draftRoom = await ctx.db.get(participation.draftRoomId as Id<"draftRooms">);
+      if (draftRoom) {
+        activeLeagues.push({
+          id: draftRoom._id,
+          name: draftRoom.name,
+          status: draftRoom.status,
+        });
+      }
+    }
+    
+    // Get recent notifications
+    const notifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_user", q => q.eq("userId", args.userId))
+      .filter(q => q.eq(q.field("isRead"), false))
+      .order("desc")
+      .take(5);
+    
+    // Get pending trades
+    const pendingTrades = await ctx.db
+      .query("tradeProposals")
+      .filter(q => 
+        q.and(
+          q.eq(q.field("toUserId"), args.userId),
+          q.eq(q.field("status"), "PENDING")
+        )
+      )
+      .collect();
+    
+    return {
+      activeLeagues,
+      unreadNotifications: notifications.length,
+      pendingTrades: pendingTrades.length,
+      recentActivity: {
+        notifications: notifications.slice(0, 3),
+        trades: pendingTrades.slice(0, 2),
+      },
+    };
+  },
+});
+
+// Get incoming trade proposals for a user
+export const getIncomingTrades = query({
+  args: {
+    userId: v.string(),
+    draftRoomId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const trades = await ctx.db
+      .query("tradeProposals")
+      .filter(q => 
+        q.and(
+          q.eq(q.field("toUserId"), args.userId),
+          q.eq(q.field("draftRoomId"), args.draftRoomId)
+        )
+      )
+      .order("desc")
+      .collect();
+    
+    // Enrich with user and team data
+    const enrichedTrades = [];
+    for (const trade of trades) {
+      const fromUser = await ctx.db.get(trade.fromUserId as Id<"users">);
+      const toUser = await ctx.db.get(trade.toUserId as Id<"users">);
+      
+      // Get team details for offered teams
+      const offeredTeams = [];
+      for (const teamId of trade.offeredTeamIds) {
+        const team = await ctx.db
+          .query("teams")
+          .withIndex("by_teamId", q => q.eq("teamId", teamId))
+          .first();
+        if (team) {
+          offeredTeams.push({
+            teamId: team.teamId,
+            teamNumber: team.teamNumber,
+            name: team.name,
+          });
+        }
+      }
+      
+      // Get team details for requested teams
+      const requestedTeams = [];
+      for (const teamId of trade.requestedTeamIds) {
+        const team = await ctx.db
+          .query("teams")
+          .withIndex("by_teamId", q => q.eq("teamId", teamId))
+          .first();
+        if (team) {
+          requestedTeams.push({
+            teamId: team.teamId,
+            teamNumber: team.teamNumber,
+            name: team.name,
+          });
+        }
+      }
+      
+      enrichedTrades.push({
+        ...trade,
+        fromUser: fromUser ? {
+          _id: fromUser._id,
+          name: fromUser.name,
+          email: fromUser.email,
+        } : null,
+        toUser: toUser ? {
+          _id: toUser._id,
+          name: toUser.name,
+          email: toUser.email,
+        } : null,
+        offeredTeams,
+        requestedTeams,
+      });
+    }
+    
+    return enrichedTrades;
+  },
+});
+
+// Get outgoing trade proposals for a user
+export const getOutgoingTrades = query({
+  args: {
+    userId: v.string(),
+    draftRoomId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const trades = await ctx.db
+      .query("tradeProposals")
+      .filter(q => 
+        q.and(
+          q.eq(q.field("fromUserId"), args.userId),
+          q.eq(q.field("draftRoomId"), args.draftRoomId)
+        )
+      )
+      .order("desc")
+      .collect();
+    
+    // Enrich with user and team data
+    const enrichedTrades = [];
+    for (const trade of trades) {
+      const fromUser = await ctx.db.get(trade.fromUserId as Id<"users">);
+      const toUser = await ctx.db.get(trade.toUserId as Id<"users">);
+      
+      // Get team details for offered teams
+      const offeredTeams = [];
+      for (const teamId of trade.offeredTeamIds) {
+        const team = await ctx.db
+          .query("teams")
+          .withIndex("by_teamId", q => q.eq("teamId", teamId))
+          .first();
+        if (team) {
+          offeredTeams.push({
+            teamId: team.teamId,
+            teamNumber: team.teamNumber,
+            name: team.name,
+          });
+        }
+      }
+      
+      // Get team details for requested teams
+      const requestedTeams = [];
+      for (const teamId of trade.requestedTeamIds) {
+        const team = await ctx.db
+          .query("teams")
+          .withIndex("by_teamId", q => q.eq("teamId", teamId))
+          .first();
+        if (team) {
+          requestedTeams.push({
+            teamId: team.teamId,
+            teamNumber: team.teamNumber,
+            name: team.name,
+          });
+        }
+      }
+      
+      enrichedTrades.push({
+        ...trade,
+        fromUser: fromUser ? {
+          _id: fromUser._id,
+          name: fromUser.name,
+          email: fromUser.email,
+        } : null,
+        toUser: toUser ? {
+          _id: toUser._id,
+          name: toUser.name,
+          email: toUser.email,
+        } : null,
+        offeredTeams,
+        requestedTeams,
+      });
+    }
+    
+    return enrichedTrades;
+  },
 }); 

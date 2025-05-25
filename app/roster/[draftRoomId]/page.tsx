@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { use } from 'react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '@/convex/_generated/api';
+import Link from 'next/link';
 
 interface RosterEntry {
   _id: string;
@@ -20,7 +21,7 @@ interface RosterEntry {
     teamId: string;
     teamNumber: number;
     name: string;
-  };
+  } | null;
 }
 
 export default function RosterManagement({ params }: { params: Promise<{ draftRoomId: string }> }) {
@@ -32,6 +33,7 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
   const [isUpdating, setIsUpdating] = useState(false);
   const [showPickHistory, setShowPickHistory] = useState(false);
   const [pickHistory, setPickHistory] = useState<any[]>([]);
+
 
   // Get user's roster
   const roster = useQuery(api.playerManagement.getUserRoster, 
@@ -161,8 +163,8 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
             </div>
           </div>
 
-          {/* Save Button */}
-          <div className="mt-4">
+          {/* Action Buttons */}
+          <div className="mt-4 flex flex-col sm:flex-row gap-3">
             <button
               onClick={handleSaveLineup}
               disabled={isUpdating}
@@ -184,6 +186,16 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
                 'Save Starting Lineup'
               )}
             </button>
+            
+            <Link
+              href={`/trading/${resolvedParams.draftRoomId}`}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            >
+              <svg className="h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+              Trade Teams
+            </Link>
           </div>
 
           {/* Error Display */}
@@ -226,7 +238,7 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
                   >
                     <div>
                       <div className="font-medium text-gray-900">
-                        {entry.team.teamNumber} - {entry.team.name}
+                        {entry.team ? `${entry.team.teamNumber} - ${entry.team.name}` : 'Team not found'}
                       </div>
                       <div className="text-sm text-gray-500">
                         Points: {entry.totalPointsScored} | Weeks Started: {entry.weeksStarted}
@@ -263,7 +275,7 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
                   >
                     <div>
                       <div className="font-medium text-gray-900">
-                        {entry.team.teamNumber} - {entry.team.name}
+                        {entry.team ? `${entry.team.teamNumber} - ${entry.team.name}` : 'Team not found'}
                       </div>
                       <div className="text-sm text-gray-500">
                         Points: {entry.totalPointsScored} | Drafted: {entry.acquisitionType}
@@ -291,8 +303,8 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
           </ul>
         </div>
 
-        {/* Draft History Button */}
-        <div className="mt-8 text-center">
+        {/* Additional Actions */}
+        <div className="mt-8 flex justify-center">
           <button
             onClick={fetchPickHistory}
             className="inline-flex items-center px-6 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
@@ -373,6 +385,8 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
           </div>
         </div>
       )}
+
+
     </div>
   );
 } 
