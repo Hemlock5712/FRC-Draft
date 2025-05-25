@@ -4,7 +4,6 @@ import { authOptions } from '@/lib/auth';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@/convex/_generated/api';
 import { Id } from '@/convex/_generated/dataModel';
-import { getIO } from '@/pages/api/socket';
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
@@ -35,21 +34,6 @@ export async function POST(
         userId: session.user.id,
         teamId: teamId,
       });
-
-      // Broadcast pick update to all clients in the room
-      const io = getIO();
-      if (io) {
-        io.to(`draft-${roomId}`).emit('draft-update', {
-          type: 'PICK_MADE',
-          roomId,
-          data: {
-            pickNumber: result.currentPickNumber,
-            roundNumber: result.roundNumber,
-            teamId,
-            userId: session.user.id,
-          }
-        });
-      }
 
       return NextResponse.json(result);
     } catch (error: any) {

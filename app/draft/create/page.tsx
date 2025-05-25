@@ -121,7 +121,7 @@ export default function CreateDraftRoom() {
 
             <div>
               <label htmlFor="maxTeams" className="block text-sm font-medium text-gray-700">
-                Maximum Teams (Even numbers only)
+                League Size (Even numbers only)
               </label>
               <input
                 type="number"
@@ -130,9 +130,9 @@ export default function CreateDraftRoom() {
                 min={2}
                 max={32}
                 step={2}
-                value={formData.maxTeams}
+                value={formData.maxTeams || ''}
                 onChange={(e) => {
-                  const value = parseInt(e.target.value);
+                  const value = parseInt(e.target.value) || 2;
                   // Ensure even number
                   const evenValue = value % 2 === 0 ? value : value - 1;
                   setFormData({ ...formData, maxTeams: Math.max(2, evenValue) });
@@ -154,8 +154,11 @@ export default function CreateDraftRoom() {
                 required
                 min={1}
                 max={20}
-                value={formData.numberOfRounds}
-                onChange={(e) => setFormData({ ...formData, numberOfRounds: parseInt(e.target.value) })}
+                value={formData.numberOfRounds || ''}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 1;
+                  setFormData({ ...formData, numberOfRounds: Math.max(1, Math.min(20, value)) });
+                }}
                 className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
@@ -170,8 +173,11 @@ export default function CreateDraftRoom() {
                 required
                 min={1}
                 max={15}
-                value={formData.teamsToStart}
-                onChange={(e) => setFormData({ ...formData, teamsToStart: parseInt(e.target.value) })}
+                value={formData.teamsToStart || ''}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 1;
+                  setFormData({ ...formData, teamsToStart: Math.max(1, Math.min(15, value)) });
+                }}
                 className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
@@ -186,8 +192,11 @@ export default function CreateDraftRoom() {
                 required
                 min={30}
                 max={300}
-                value={formData.pickTimeLimit}
-                onChange={(e) => setFormData({ ...formData, pickTimeLimit: parseInt(e.target.value) })}
+                value={formData.pickTimeLimit || ''}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 30;
+                  setFormData({ ...formData, pickTimeLimit: Math.max(30, Math.min(300, value)) });
+                }}
                 className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>

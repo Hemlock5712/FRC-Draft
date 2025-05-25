@@ -4,7 +4,6 @@ import { authOptions } from '@/lib/auth';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@/convex/_generated/api';
 import { Id } from '@/convex/_generated/dataModel';
-import { getIO } from '@/pages/api/socket';
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL as string);
 
@@ -32,19 +31,6 @@ export async function POST(
         roomId: roomId as Id<"draftRooms">,
         userId: session.user.id,
       });
-
-      // Broadcast draft start to all clients in the room
-      const io = getIO();
-      if (io) {
-        io.to(`draft-${roomId}`).emit('draft-update', {
-          type: 'DRAFT_STARTED',
-          roomId,
-          data: {
-            startedBy: session.user.id,
-            startedByName: session.user.name,
-          }
-        });
-      }
 
       return NextResponse.json(result);
     } catch (error: any) {
