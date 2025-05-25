@@ -29,6 +29,7 @@ export async function POST(
         roomId: roomId,
         userId: session.user.id,
       });
+
       return NextResponse.json(result);
     } catch (error: any) {
       // Convex errors often have a `data` field with more info

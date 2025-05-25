@@ -42,6 +42,7 @@ interface PublicRoom {
   maxTeams: number;
   participantCount: number;
   hasSpace: boolean;
+  status?: string;
   creator: {
     name?: string | null;
     email?: string | null;
@@ -59,6 +60,8 @@ export default function Dashboard() {
   const [publicRoomsError, setPublicRoomsError] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
   const [joiningRoom, setJoiningRoom] = useState<string | null>(null);
+  const [showPickHistory, setShowPickHistory] = useState<string | null>(null);
+  const [pickHistory, setPickHistory] = useState<any[]>([]);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -202,15 +205,42 @@ export default function Dashboard() {
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Failed to join draft room');
+        throw new Error(data.message || 'Failed to join draft room');
       }
 
-      // Navigate to the draft room
-      router.push(`/draft/${roomId}`);
+      // Refresh the rooms list
+      await fetchDraftRooms();
+      await fetchPublicRooms();
     } catch (err) {
       setPublicRoomsError(err instanceof Error ? err.message : 'Failed to join draft room');
     } finally {
       setJoiningRoom(null);
+    }
+  };
+
+  // Function to fetch pick history for completed drafts (Phase 3 item 34)
+  const fetchPickHistory = async (roomId: string) => {
+    try {
+      const response = await fetch(`/api/draft/${roomId}/picks`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch pick history');
+      }
+      const data = await response.json();
+      setPickHistory(data.picks || []);
+      setShowPickHistory(roomId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch pick history');
+    }
+  };
+
+  // Function to handle clicking on draft rooms (Phase 3 item 34)
+  const handleDraftRoomClick = (room: DraftRoom, e: React.MouseEvent) => {
+    e.preventDefault();
+    if (room.status === 'COMPLETED') {
+      // For completed drafts (leagues), go directly to roster management
+      router.push(`/roster/${room.id}`);
+    } else {
+      router.push(`/draft/${room.id}`);
     }
   };
 
@@ -221,6 +251,9 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const completedRooms = activeRooms.filter(room => room.status === 'COMPLETED');
+  const nonCompletedRooms = activeRooms.filter(room => room.status !== 'COMPLETED');
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -235,7 +268,7 @@ export default function Dashboard() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <Link
             href="/draft/create"
             className="bg-white shadow-lg rounded-lg p-6 hover:shadow-xl transition-shadow"
@@ -273,10 +306,99 @@ export default function Dashboard() {
               </div>
             </div>
           </Link>
+
+          <Link
+            href="/rosters"
+            className="bg-white shadow-lg rounded-lg p-6 hover:shadow-xl transition-shadow"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Roster Management</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Manage your draft picks and starting lineups
+                </p>
+              </div>
+              <div className="bg-purple-100 p-3 rounded-full">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
+            </div>
+            <div className="mt-4 text-sm text-gray-600">
+              View all your rosters across draft rooms
+            </div>
+          </Link>
         </div>
 
+        {/* My Leagues (Completed Drafts) - Only show if there are completed leagues */}
+        {!loading && !error && completedRooms.length > 0 && (
+          <div className="bg-white shadow-lg rounded-lg overflow-hidden mb-8">
+            <div className="px-6 py-5 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">My Leagues</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Completed drafts where you can manage your roster and track performance
+              </p>
+            </div>
+            <div className="divide-y divide-gray-200">
+              {completedRooms.map((room) => (
+                <div key={`league-${room.id}`} className="block hover:bg-gray-50 transition-colors">
+                  <div className="px-6 py-4">
+                    <div className="flex items-center justify-between">
+                      <div 
+                        className="flex-1 cursor-pointer"
+                        onClick={(e) => handleDraftRoomClick(room, e)}
+                      >
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">{room.name}</h3>
+                          {room.description && (
+                            <p className="mt-1 text-sm text-gray-500">{room.description}</p>
+                          )}
+                        </div>
+                        <div className="mt-2 flex items-center text-sm text-gray-500 space-x-4">
+                          <span>{room.DraftParticipant.length} participants</span>
+                          <span>•</span>
+                          <span>{room._count.DraftPick} picks made</span>
+                          <span>•</span>
+                          <span>Created by {room.creator.name || room.creator.email}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-4">
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(room.status)}`}>
+                          League
+                        </span>
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${room.privacy === 'PUBLIC' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                          {room.privacy === 'PUBLIC' ? 'Public' : 'Private'}
+                        </span>
+                        
+                        {/* Roster Management Button - Always show for completed drafts where user is a participant */}
+                        {room.DraftParticipant.some(p => 
+                          p.user && session?.user && (
+                            p.user.email === session.user.email || 
+                            p.user.name === session.user.name
+                          )
+                        ) && (
+                          <Link
+                            href={`/roster/${room.id}`}
+                            className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                            title="Manage your roster"
+                          >
+                            <svg className="h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 515.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 919.288 0M15 7a3 3 0 11-6 0 3 3 0 616 0zm6 3a2 2 0 11-4 0 2 2 0 914 0zM7 10a2 2 0 11-4 0 2 2 0 914 0z" />
+                            </svg>
+                            Manage Roster
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Active Draft Rooms */}
-        <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+        <div className="bg-white shadow-lg rounded-lg overflow-hidden mb-8">
           <div className="px-6 py-5 border-b border-gray-200">
             <h2 className="text-xl font-semibold text-gray-900">Your Active Draft Rooms</h2>
           </div>
@@ -289,18 +411,18 @@ export default function Dashboard() {
               <div className="px-6 py-4 text-sm text-red-500">
                 Error: {error}
               </div>
-            ) : activeRooms.length === 0 ? (
+            ) : nonCompletedRooms.length === 0 ? (
               <div className="px-6 py-4 text-sm text-gray-500 italic">
-                You haven't created or joined any draft rooms yet.
+                You don't have any active draft rooms right now.
               </div>
             ) : (
-              activeRooms.map((room) => (
+              nonCompletedRooms.map((room) => (
                 <div key={`active-${room.id}`} className="block hover:bg-gray-50 transition-colors">
                   <div className="px-6 py-4">
                     <div className="flex items-center justify-between">
-                      <Link 
-                        href={`/draft/${room.id}`} 
-                        className="flex-1"
+                      <div 
+                        className="flex-1 cursor-pointer"
+                        onClick={(e) => handleDraftRoomClick(room, e)}
                       >
                         <div>
                           <h3 className="text-lg font-medium text-gray-900">{room.name}</h3>
@@ -315,7 +437,7 @@ export default function Dashboard() {
                           <span>•</span>
                           <span>Created by {room.creator.name || room.creator.email}</span>
                         </div>
-                      </Link>
+                      </div>
                       <div className="flex items-center space-x-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(room.status)}`}>
                           {room.status}
@@ -323,6 +445,26 @@ export default function Dashboard() {
                         <span className={`px-3 py-1 rounded-full text-xs font-medium ${room.privacy === 'PUBLIC' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
                           {room.privacy === 'PUBLIC' ? 'Public' : 'Private'}
                         </span>
+                        
+                        {/* Roster Management Button - Show if user is a participant and has made picks */}
+                        {room.DraftParticipant.some(p => 
+                          p.user && session?.user && (
+                            p.user.email === session.user.email || 
+                            p.user.name === session.user.name
+                          )
+                        ) && room._count.DraftPick > 0 && room.status !== 'COMPLETED' && (
+                          <Link
+                            href={`/roster/${room.id}`}
+                            className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                            title="Manage your roster"
+                          >
+                            <svg className="h-4 w-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 515.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 919.288 0M15 7a3 3 0 11-6 0 3 3 0 616 0zm6 3a2 2 0 11-4 0 2 2 0 914 0zM7 10a2 2 0 11-4 0 2 2 0 914 0z" />
+                            </svg>
+                            Roster
+                          </Link>
+                        )}
+
                         {session?.user?.id === room.createdBy && (
                           <button
                             onClick={() => handleDelete(room.id)}
@@ -333,7 +475,7 @@ export default function Dashboard() {
                             {deleteLoading === room.id ? (
                               <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 718-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                               </svg>
                             ) : (
                               <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -352,9 +494,12 @@ export default function Dashboard() {
         </div>
 
         {/* Public Draft Rooms */}
-        <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+        <div className="bg-white shadow-lg rounded-lg overflow-hidden mb-8">
           <div className="px-6 py-5 border-b border-gray-200">
-            <h2 className="text-xl font-semibold text-gray-900">Available Public Draft Rooms</h2>
+            <h2 className="text-xl font-semibold text-gray-900">Public Draft Rooms</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Join public draft rooms that other users have created
+            </p>
           </div>
           <div className="divide-y divide-gray-200">
             {publicRoomsLoading ? (
@@ -375,35 +520,36 @@ export default function Dashboard() {
                   <div className="px-6 py-4">
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
-                        <h3 className="text-lg font-medium text-gray-900">{room.name}</h3>
-                        {room.description && (
-                          <p className="mt-1 text-sm text-gray-500">{room.description}</p>
-                        )}
+                        <div>
+                          <h3 className="text-lg font-medium text-gray-900">{room.name}</h3>
+                          {room.description && (
+                            <p className="mt-1 text-sm text-gray-500">{room.description}</p>
+                          )}
+                        </div>
                         <div className="mt-2 flex items-center text-sm text-gray-500 space-x-4">
                           <span>{room.participantCount} / {room.maxTeams} participants</span>
                           <span>•</span>
                           <span>Created by {room.creator.name || room.creator.email}</span>
                         </div>
                       </div>
-                      <button
-                        onClick={() => {
-                          if (room._id) {
-                            handleJoinPublicRoom(room._id);
-                          } else {
-                            setPublicRoomsError('Invalid room ID');
-                          }
-                        }}
-                        disabled={joiningRoom === room._id || !room.hasSpace}
-                        className={`px-4 py-2 rounded-md text-sm font-medium ${
-                          joiningRoom === room._id 
-                            ? 'bg-blue-400 text-white cursor-not-allowed' 
-                            : !room.hasSpace 
-                              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                              : 'bg-blue-600 text-white hover:bg-blue-700'
-                        }`}
-                      >
-                        {joiningRoom === room._id ? 'Joining...' : !room.hasSpace ? 'Room Full' : 'Join'}
-                      </button>
+                      <div className="flex items-center space-x-4">
+                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          Public
+                        </span>
+                        <button
+                          onClick={() => handleJoinPublicRoom(room._id)}
+                          disabled={joiningRoom === room._id || !room.hasSpace}
+                          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                            joiningRoom === room._id 
+                              ? 'bg-blue-400 text-white cursor-not-allowed' 
+                              : !room.hasSpace 
+                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                : 'bg-blue-600 text-white hover:bg-blue-700'
+                          }`}
+                        >
+                          {joiningRoom === room._id ? 'Joining...' : !room.hasSpace ? 'Room Full' : 'Join'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -411,7 +557,77 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+
       </div>
+
+      {/* Pick History Modal (Phase 3 item 34) */}
+      {showPickHistory && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-4/5 max-w-4xl shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-gray-900">
+                  Draft Pick History
+                </h3>
+                <button
+                  onClick={() => setShowPickHistory(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="mt-2">
+                <div className="overflow-hidden border border-gray-200 rounded-lg">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Pick #
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Round
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Team
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Picked By
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Time
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {pickHistory.map((pick) => (
+                        <tr key={pick._id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {pick.pickNumber}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {pick.roundNumber}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {pick.participant?.user?.name || pick.participant?.user?.email || 'Unknown'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(pick.pickedAt).toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

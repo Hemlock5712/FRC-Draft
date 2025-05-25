@@ -93,6 +93,20 @@ export const makePick = mutation({
       pickedAt: now,
     });
     
+    // Add team to user's roster (Phase 4 integration)
+    await ctx.db.insert("playerRosters", {
+      userId: args.userId,
+      draftRoomId: args.roomId,
+      teamId: args.teamId,
+      isStarting: false, // Will be set later by user
+      acquisitionType: "draft",
+      acquisitionDate: now,
+      totalPointsScored: 0,
+      weeksStarted: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    
     // Check if the draft is complete
     if (currentPickNumber === totalParticipants * draftRoom.maxTeams) {
       // Update room status to COMPLETED
@@ -120,25 +134,32 @@ export const getDraftState = query({
       throw new Error("Draft room not found");
     }
     
-    // Get all participants
+    // Get all participants with a reasonable limit
+    const MAX_PARTICIPANTS = 100; // Reasonable limit for participants
     const participants = await ctx.db.query("draftParticipants")
       .withIndex("by_draft_room", q => q.eq("draftRoomId", args.roomId))
-      .collect();
+      .take(MAX_PARTICIPANTS);
     
-    // Get all picks
+    // Get all picks with a reasonable limit  
+    const MAX_PICKS = 1000; // Reasonable limit for picks history
     const picks = await ctx.db.query("draftPicks")
       .withIndex("by_draft_room", q => q.eq("draftRoomId", args.roomId))
-      .collect();
+      .take(MAX_PICKS);
     
-    // Get all teams that haven't been picked yet
+    // Get available teams that haven't been picked yet - LIMIT to prevent array size errors
     const pickedTeamIds = new Set(picks.map(pick => pick.teamId));
     
-    // Use our index to get teams more efficiently
-    const allTeams = await ctx.db.query("teams").collect();
+    // Only return first 500 available teams to stay under Convex's 8192 limit
+    const MAX_AVAILABLE_TEAMS = 500;
+    const allTeams = await ctx.db.query("teams")
+      .withIndex("by_teamNumber")
+      .order("asc")
+      .take(MAX_AVAILABLE_TEAMS * 2); // Take more than needed to account for picked teams
     
     // Ensure we're sending back complete team info
     const availableTeams = allTeams
       .filter(team => !pickedTeamIds.has(team.teamId))
+      .slice(0, MAX_AVAILABLE_TEAMS) // Ensure we don't exceed the limit
       .map(team => ({
         _id: team._id,
         teamId: team.teamId,
@@ -180,7 +201,10 @@ export const getDraftState = query({
     
     // Enrich participants with user data
     const enrichedParticipants = [];
-    for (const participant of participants) {
+    const MAX_ENRICHED_PARTICIPANTS = 50; // Safety limit
+    const participantsToEnrich = participants.slice(0, MAX_ENRICHED_PARTICIPANTS);
+    
+    for (const participant of participantsToEnrich) {
       const user = await ctx.db.query("users")
         .filter(q => q.eq(q.field("_id"), participant.userId))
         .first();
@@ -196,13 +220,17 @@ export const getDraftState = query({
     
     // Enrich picks with team and participant data
     const enrichedPicks = [];
-    for (const pick of picks) {
-      // Use our new index to more efficiently find the team
+    const MAX_ENRICHED_PICKS = 200; // Safety limit for picks
+    const picksToEnrich = picks.slice(0, MAX_ENRICHED_PICKS);
+    
+    for (const pick of picksToEnrich) {
+      // Get team data
       const team = await ctx.db.query("teams")
         .withIndex("by_teamId")
         .filter(q => q.eq(q.field("teamId"), pick.teamId))
         .first();
       
+      // Get participant data
       const participant = await ctx.db.get(pick.participantId as Id<"draftParticipants">);
       const user = participant ? await ctx.db.query("users")
         .filter(q => q.eq(q.field("_id"), participant.userId))
@@ -218,7 +246,7 @@ export const getDraftState = query({
           teamNumber: team.teamNumber,
         } : null,
         participant: {
-          id: participant?._id,
+          _id: participant?._id,
           user: {
             name: user?.name,
             email: user?.email,
@@ -227,28 +255,157 @@ export const getDraftState = query({
       });
     }
     
+    // Get current drafter user info
+    let currentDrafterUser = null;
+    if (currentDrafter) {
+      currentDrafterUser = await ctx.db.query("users")
+        .filter(q => q.eq(q.field("_id"), currentDrafter.userId))
+        .first();
+    }
+    
     return {
       room,
       participants: enrichedParticipants,
       picks: enrichedPicks,
-      availableTeams,
+      availableTeams: [], // Return empty array to prevent size error - use getAvailableTeams query instead
       currentDrafter: currentDrafter ? {
         id: currentDrafter._id,
         user: {
-          name: await ctx.db.query("users")
-            .filter(q => q.eq(q.field("_id"), currentDrafter.userId))
-            .first()
-            .then(user => user?.name),
-          email: await ctx.db.query("users")
-            .filter(q => q.eq(q.field("_id"), currentDrafter.userId))
-            .first()
-            .then(user => user?.email),
+          name: currentDrafterUser?.name,
+          email: currentDrafterUser?.email,
         },
       } : null,
       isMyTurn,
       currentPickNumber,
       currentRound: roundNumber,
       timeRemaining,
+    };
+  },
+});
+
+// Get draft picks for a specific room (for pick history)
+export const getDraftPicks = query({
+  args: {
+    roomId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Convert string roomId to Id<"draftRooms">
+    const roomIdAsId = args.roomId as Id<"draftRooms">;
+    
+    // Get the draft room to verify it exists
+    const room = await ctx.db.get(roomIdAsId);
+    if (!room) {
+      throw new Error("Draft room not found");
+    }
+    
+    // Get all picks for this room
+    const picks = await ctx.db.query("draftPicks")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", roomIdAsId))
+      .collect();
+    
+    // Enrich picks with team and participant data
+    const enrichedPicks = [];
+    for (const pick of picks) {
+      // Get team data
+      const team = await ctx.db.query("teams")
+        .withIndex("by_teamId")
+        .filter(q => q.eq(q.field("teamId"), pick.teamId))
+        .first();
+      
+      // Get participant data
+      const participant = await ctx.db.get(pick.participantId as Id<"draftParticipants">);
+      const user = participant ? await ctx.db.query("users")
+        .filter(q => q.eq(q.field("_id"), participant.userId))
+        .first() : null;
+      
+      enrichedPicks.push({
+        ...pick,
+        team: team ? {
+          _id: team._id, 
+          teamId: team.teamId,
+          name: team.name,
+          teamNumber: team.teamNumber,
+        } : null,
+        participant: {
+          _id: participant?._id,
+          user: {
+            name: user?.name,
+            email: user?.email,
+          },
+        },
+      });
+    }
+    
+    // Sort picks by pick number
+    return enrichedPicks.sort((a, b) => a.pickNumber - b.pickNumber);
+  },
+});
+
+// Get available teams for draft selection (with pagination/limits)
+export const getAvailableTeams = query({
+  args: {
+    roomId: v.id("draftRooms"),
+    limit: v.optional(v.number()),
+    offset: v.optional(v.number()),
+    search: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit || 100; // Default to 100 teams
+    const offset = args.offset || 0;
+    
+    // Get all picks to determine what teams are already taken
+    const picks = await ctx.db.query("draftPicks")
+      .withIndex("by_draft_room", q => q.eq("draftRoomId", args.roomId))
+      .collect();
+    
+    const pickedTeamIds = new Set(picks.map(pick => pick.teamId));
+    
+    let availableTeams = [];
+    let total = 0;
+    
+    if (args.search) {
+      // For search, get all teams to ensure complete search coverage
+      const searchLower = args.search.toLowerCase();
+      const searchNumber = args.search;
+      
+      // Get all teams for complete search coverage
+      const allTeams = await ctx.db.query("teams")
+        .withIndex("by_teamNumber")
+        .order("asc")
+        .collect(); // Get all teams for search
+      
+      const filteredTeams = allTeams
+        .filter(team => !pickedTeamIds.has(team.teamId))
+        .filter(team => 
+          team.name.toLowerCase().includes(searchLower) ||
+          team.teamNumber.toString().includes(searchNumber)
+        );
+      
+      total = filteredTeams.length;
+      availableTeams = filteredTeams.slice(offset, offset + limit);
+    } else {
+      // For non-search queries, we can be much more efficient
+      // Get all teams for complete coverage
+      const teamBatch = await ctx.db.query("teams")
+        .withIndex("by_teamNumber")
+        .order("asc")
+        .collect(); // Get all teams
+      
+      const availableTeamsBatch = teamBatch.filter((team: any) => !pickedTeamIds.has(team.teamId));
+      
+      total = availableTeamsBatch.length;
+      availableTeams = availableTeamsBatch.slice(offset, offset + limit);
+    }
+    
+    return {
+      teams: availableTeams.map(team => ({
+        _id: team._id,
+        teamId: team.teamId,
+        name: team.name,
+        teamNumber: team.teamNumber,
+      })),
+      total: total,
+      hasMore: total > offset + limit
     };
   },
 }); 

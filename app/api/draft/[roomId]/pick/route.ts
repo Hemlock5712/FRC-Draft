@@ -34,6 +34,7 @@ export async function POST(
         userId: session.user.id,
         teamId: teamId,
       });
+
       return NextResponse.json(result);
     } catch (error: any) {
       const errorMessage = error.data?.message || error.message || 'Failed to make pick';

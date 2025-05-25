@@ -11,6 +11,8 @@ interface DraftRoomFormData {
   pickTimeLimit: number;
   isSnakeDraft: boolean;
   privacy: 'PUBLIC' | 'PRIVATE';
+  numberOfRounds: number;
+  teamsToStart: number;
 }
 
 export default function CreateDraftRoom() {
@@ -26,6 +28,8 @@ export default function CreateDraftRoom() {
     pickTimeLimit: 120,
     isSnakeDraft: true,
     privacy: 'PUBLIC',
+    numberOfRounds: 8,
+    teamsToStart: 5,
   });
 
   // Redirect to login if not authenticated
@@ -52,6 +56,8 @@ export default function CreateDraftRoom() {
           pickTimeSeconds: formData.pickTimeLimit,
           snakeFormat: formData.isSnakeDraft,
           privacy: formData.privacy,
+          numberOfRounds: formData.numberOfRounds,
+          teamsToStart: formData.teamsToStart,
         }),
       });
 
@@ -115,7 +121,7 @@ export default function CreateDraftRoom() {
 
             <div>
               <label htmlFor="maxTeams" className="block text-sm font-medium text-gray-700">
-                Maximum Teams
+                League Size (Even numbers only)
               </label>
               <input
                 type="number"
@@ -123,8 +129,55 @@ export default function CreateDraftRoom() {
                 required
                 min={2}
                 max={32}
-                value={formData.maxTeams}
-                onChange={(e) => setFormData({ ...formData, maxTeams: parseInt(e.target.value) })}
+                step={2}
+                value={formData.maxTeams || ''}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 2;
+                  // Ensure even number
+                  const evenValue = value % 2 === 0 ? value : value - 1;
+                  setFormData({ ...formData, maxTeams: Math.max(2, evenValue) });
+                }}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-sm text-gray-500">
+                Only even numbers are allowed (2, 4, 6, 8, etc.)
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="numberOfRounds" className="block text-sm font-medium text-gray-700">
+                Number of Rounds
+              </label>
+              <input
+                type="number"
+                id="numberOfRounds"
+                required
+                min={1}
+                max={20}
+                value={formData.numberOfRounds || ''}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 1;
+                  setFormData({ ...formData, numberOfRounds: Math.max(1, Math.min(20, value)) });
+                }}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="teamsToStart" className="block text-sm font-medium text-gray-700">
+                Teams to Start
+              </label>
+              <input
+                type="number"
+                id="teamsToStart"
+                required
+                min={1}
+                max={15}
+                value={formData.teamsToStart || ''}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 1;
+                  setFormData({ ...formData, teamsToStart: Math.max(1, Math.min(15, value)) });
+                }}
                 className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
@@ -139,8 +192,11 @@ export default function CreateDraftRoom() {
                 required
                 min={30}
                 max={300}
-                value={formData.pickTimeLimit}
-                onChange={(e) => setFormData({ ...formData, pickTimeLimit: parseInt(e.target.value) })}
+                value={formData.pickTimeLimit || ''}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 30;
+                  setFormData({ ...formData, pickTimeLimit: Math.max(30, Math.min(300, value)) });
+                }}
                 className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>

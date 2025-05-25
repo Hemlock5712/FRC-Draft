@@ -4,6 +4,8 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { use } from 'react';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 // import type { Team, DraftRoom, DraftParticipant, DraftPick, User } from '@prisma/client'; // Prisma import removed
 
 // Define types based on Convex schema
@@ -94,14 +96,43 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
   const resolvedParams = use(params);
   const { data: session, status } = useSession();
   const router = useRouter();
-  const [draftState, setDraftState] = useState<DraftRoomState | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
-  // Calculate time remaining (if you have a timer feature)
-  let timeRemaining = 0;
   const [timeLeft, setTimeLeft] = useState(0);
+  const [viewingParticipantIndex, setViewingParticipantIndex] = useState(0); // For Phase 3 item 33
+  const [showDraftCompleteModal, setShowDraftCompleteModal] = useState(false); // For Phase 3 item 31
+  
+  // Team search and pagination state
+  const [teamSearch, setTeamSearch] = useState('');
+  const [teamPage, setTeamPage] = useState(0);
+  const teamsPerPage = 20;
+  
+  // Loading state for team picking
+  const [pickingTeam, setPickingTeam] = useState<string | null>(null);
+  
+  // Initialize Convex real-time subscriptions and mutations
+  const draftState = useQuery(api.draft.getDraftState, 
+    resolvedParams?.roomId ? { roomId: resolvedParams.roomId as any } : "skip"
+  );
+  
+  // Get available teams with search and pagination
+  const availableTeamsData = useQuery(api.draftPicks.getAvailableTeams, 
+    resolvedParams?.roomId ? { 
+      roomId: resolvedParams.roomId as any,
+      limit: teamsPerPage,
+      offset: teamPage * teamsPerPage,
+      search: teamSearch || undefined
+    } : "skip"
+  );
+  
+  // Convex mutations
+  const makePick = useMutation(api.draftPicks.makePick);
+  
+  const loading = draftState === undefined;
+
+  // Calculate isMyTurn from Convex data
+  const isMyTurn = draftState?.currentDrafter?.userId === session?.user?.id;
 
   useEffect(() => {
     if (resolvedParams?.roomId === 'undefined' || !resolvedParams?.roomId) {
@@ -130,11 +161,19 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
       return;
     }
 
-    fetchDraftState();
-    // Set up polling for draft state
-    const interval = setInterval(fetchDraftState, 5000);
-    return () => clearInterval(interval);
-  }, [session, resolvedParams, status]);
+    // Set the viewing participant to the current user by default (Phase 3 item 33)
+    if (draftState?.participants && session?.user?.id) {
+      const currentUserIndex = draftState.participants.findIndex((p: any) => p.userId === session.user.id);
+      if (currentUserIndex !== -1) {
+        setViewingParticipantIndex(currentUserIndex);
+      }
+    }
+    
+    // Check if draft is complete (Phase 3 item 31)
+    if (draftState?.room?.status === "COMPLETED" && !showDraftCompleteModal) {
+      setShowDraftCompleteModal(true);
+    }
+  }, [session, resolvedParams, status, draftState]);
 
   useEffect(() => {
     if (draftState?.room?.status === "ACTIVE" && draftState?.currentDrafter) {
@@ -157,55 +196,26 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
     }
   }, [draftState?.room?.status, draftState?.timeRemaining, draftState?.currentDrafter]);
 
-  const fetchDraftState = async () => {
-    if (!resolvedParams?.roomId || resolvedParams.roomId === 'undefined') {
-      setError('Invalid draft room ID');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      
-      // Make the API call with explicit string conversion of roomId
-      const roomId = resolvedParams.roomId.toString();
-      
-      const response = await fetch(`/api/draft/${roomId}/state`);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || errorData.error || 'Failed to fetch draft state');
-      }
-
-      const data = await response.json();
-      setDraftState(data);
-      setError(null);
-    } catch (err) {
-      console.error('Error fetching draft state:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch draft state');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleTeamPick = async (teamId: string) => {
+    if (!isMyTurn || pickingTeam) {
+      return; // Prevent picking if not your turn or already picking
+    }
+
     try {
-      const response = await fetch(`/api/draft/${resolvedParams.roomId}/pick`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ teamId: teamId }),
+      setPickingTeam(teamId);
+      setError(null);
+      
+      await makePick({
+        roomId: resolvedParams.roomId as any,
+        userId: session?.user?.id as string,
+        teamId: teamId,
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to make pick');
-      }
-
-      // Refresh draft state
-      fetchDraftState();
+      // Convex real-time subscription will automatically update the UI
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to make pick');
+    } finally {
+      setPickingTeam(null);
     }
   };
 
@@ -229,8 +239,7 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
         throw new Error(data.message || data.error || 'Failed to join draft room');
       }
 
-      // Refresh draft state
-      await fetchDraftState();
+      // Convex real-time subscription will automatically update the UI
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to join draft room');
     } finally {
@@ -258,8 +267,7 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
         throw new Error(data.error || 'Failed to start draft');
       }
 
-      // Refresh draft state
-      await fetchDraftState();
+      // Convex real-time subscription will automatically update the UI
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start draft');
     } finally {
@@ -371,7 +379,7 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           {/* Participants */}
           <div className="bg-white shadow-lg rounded-lg p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Participants</h2>
@@ -403,6 +411,60 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
             </div>
           </div>
 
+          {/* Participant Picks Sidebar */}
+          <div className="bg-white shadow-lg rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-gray-900">Team Picks</h2>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setViewingParticipantIndex(Math.max(0, viewingParticipantIndex - 1))}
+                  disabled={viewingParticipantIndex === 0}
+                  className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setViewingParticipantIndex(Math.min(draftState.participants.length - 1, viewingParticipantIndex + 1))}
+                  disabled={viewingParticipantIndex === draftState.participants.length - 1}
+                  className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            
+            {draftState.participants[viewingParticipantIndex] && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-3">
+                  {draftState.participants[viewingParticipantIndex].user.name || draftState.participants[viewingParticipantIndex].user.email}
+                </h3>
+                <div className="space-y-2">
+                  {draftState.picks
+                    .filter(pick => pick.participantId === draftState.participants[viewingParticipantIndex]._id)
+                    .map((pick) => (
+                      <div key={pick._id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                        <div>
+                          <div className="font-medium text-sm text-gray-900">
+                            {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Pick #{pick.pickNumber}
+                        </div>
+                      </div>
+                    ))}
+                  {draftState.picks.filter(pick => pick.participantId === draftState.participants[viewingParticipantIndex]._id).length === 0 && (
+                    <div className="text-sm text-gray-500 italic">No picks yet</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Draft Board */}
           <div className="lg:col-span-2 bg-white shadow-lg rounded-lg p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Draft Board</h2>
@@ -417,7 +479,7 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
                       {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
                     </div>
                     <div className="text-sm text-gray-500">
-                      Picked by {pick.participant.user.name || pick.participant.user.email}
+                      Picked by {pick.participant?.user?.name || pick.participant?.user?.email || 'Unknown'}
                     </div>
                   </div>
                   <div className="text-sm text-gray-500">
@@ -428,29 +490,216 @@ export default function DraftRoom({ params }: { params: Promise<{ roomId: string
             </div>
 
             {/* Available Teams */}
-            {draftState.isMyTurn && (
+            {isMyTurn && draftState.room.status !== "COMPLETED" && (
               <div className="mt-8">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Available Teams</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {draftState.availableTeams.map((team) => (
-                    <button
-                      key={team._id}
-                      onClick={() => handleTeamPick(team.teamId)}
-                      className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:border-blue-500 hover:shadow-md transition-all"
-                    >
-                      <div>
-                        <div className="font-medium text-gray-900">
-                          {team.teamNumber} - {team.name}
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium text-gray-900">Available Teams</h3>
+                  {availableTeamsData && (
+                    <span className="text-sm text-gray-500">
+                      {availableTeamsData.total} teams available
+                    </span>
+                  )}
+                </div>
+                
+                {/* Search bar */}
+                <div className="mb-4">
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search teams by name or number..."
+                      value={teamSearch}
+                      onChange={(e) => {
+                        setTeamSearch(e.target.value);
+                        setTeamPage(0); // Reset to first page when searching
+                      }}
+                      className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                    />
+                  </div>
+                </div>
+                
+                {/* Error display */}
+                {error && (
+                  <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
+                    <div className="flex">
+                      <div className="flex-shrink-0">
+                        <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                      <div className="ml-3">
+                        <p className="text-sm text-red-700">{error}</p>
+                      </div>
+                      <div className="ml-auto pl-3">
+                        <div className="-mx-1.5 -my-1.5">
+                          <button
+                            onClick={() => setError(null)}
+                            className="inline-flex bg-red-50 rounded-md p-1.5 text-red-500 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-red-50 focus:ring-red-600"
+                          >
+                            <span className="sr-only">Dismiss</span>
+                            <svg className="h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                          </button>
                         </div>
                       </div>
-                    </button>
-                  ))}
+                    </div>
+                  </div>
+                )}
+                
+                <div className="overflow-hidden border border-gray-200 rounded-lg">
+                  {availableTeamsData?.teams ? (
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Team #
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Team Name
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Action
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {availableTeamsData.teams.map((team) => (
+                          <tr 
+                            key={team._id}
+                            className={`hover:bg-gray-50 ${pickingTeam ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                            onClick={() => !pickingTeam && handleTeamPick(team.teamId)}
+                          >
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {team.teamNumber}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {team.name}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!pickingTeam) {
+                                    handleTeamPick(team.teamId);
+                                  }
+                                }}
+                                disabled={!!pickingTeam}
+                                className={`inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md text-white ${
+                                  pickingTeam === team.teamId
+                                    ? 'bg-yellow-500 cursor-not-allowed'
+                                    : pickingTeam
+                                    ? 'bg-gray-400 cursor-not-allowed'
+                                    : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+                                }`}
+                              >
+                                {pickingTeam === team.teamId ? (
+                                  <>
+                                    <svg className="animate-spin -ml-1 mr-1 h-3 w-3 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Picking...
+                                  </>
+                                ) : (
+                                  'Pick'
+                                )}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="p-4 text-center text-gray-500">
+                      Loading teams...
+                    </div>
+                  )}
                 </div>
+                
+                {/* Pagination */}
+                {availableTeamsData && availableTeamsData.teams.length > 0 && (
+                  <div className="mt-4 flex items-center justify-between">
+                    <div className="text-sm text-gray-700">
+                      Showing {teamPage * teamsPerPage + 1} to {Math.min((teamPage + 1) * teamsPerPage, availableTeamsData.total)} of {availableTeamsData.total} results
+                    </div>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => setTeamPage(Math.max(0, teamPage - 1))}
+                        disabled={teamPage === 0}
+                        className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      <span className="px-3 py-1 text-sm">
+                        Page {teamPage + 1}
+                      </span>
+                      <button
+                        onClick={() => setTeamPage(teamPage + 1)}
+                        disabled={!availableTeamsData.hasMore}
+                        className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Draft Complete Modal (Phase 3 item 31) */}
+      {showDraftCompleteModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3 text-center">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">
+                🎉 Draft Complete!
+              </h3>
+              <div className="mt-2 px-7 py-3">
+                <p className="text-sm text-gray-500 mb-4">
+                  Here are your picks:
+                </p>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {draftState?.picks
+                    .filter(pick => 
+                      pick.participant && 
+                      (pick.participant.user?.name === session?.user?.name || 
+                       pick.participant.user?.email === session?.user?.email)
+                    )
+                    .map((pick) => (
+                      <div key={pick._id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                        <div className="text-sm font-medium text-gray-900">
+                          {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Pick #{pick.pickNumber}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+              <div className="items-center px-4 py-3">
+                <button
+                  onClick={() => {
+                    setShowDraftCompleteModal(false);
+                    router.push('/dashboard');
+                  }}
+                  className="px-4 py-2 bg-blue-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                >
+                  Go to Dashboard
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 
