@@ -30,6 +30,8 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [showPickHistory, setShowPickHistory] = useState(false);
+  const [pickHistory, setPickHistory] = useState<any[]>([]);
 
   // Get user's roster
   const roster = useQuery(api.playerManagement.getUserRoster, 
@@ -98,6 +100,22 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
       setError(err instanceof Error ? err.message : 'Failed to update lineup');
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const fetchPickHistory = async () => {
+    if (!resolvedParams?.draftRoomId) return;
+
+    try {
+      const response = await fetch(`/api/draft/${resolvedParams.draftRoomId}/picks`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch pick history');
+      }
+      const data = await response.json();
+      setPickHistory(data.picks || []);
+      setShowPickHistory(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch pick history');
     }
   };
 
@@ -272,7 +290,89 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
             <li>• Team performance will be tracked based on their real competition results</li>
           </ul>
         </div>
+
+        {/* Draft History Button */}
+        <div className="mt-8 text-center">
+          <button
+            onClick={fetchPickHistory}
+            className="inline-flex items-center px-6 py-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            <svg className="h-5 w-5 mr-2 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            View League Draft History
+          </button>
+        </div>
       </div>
+
+      {/* Pick History Modal */}
+      {showPickHistory && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-4/5 max-w-4xl shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-gray-900">
+                  League Draft History
+                </h3>
+                <button
+                  onClick={() => setShowPickHistory(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="mt-2">
+                <div className="overflow-hidden border border-gray-200 rounded-lg">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Pick #
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Round
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Team
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Picked By
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Time
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {pickHistory.map((pick) => (
+                        <tr key={pick._id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {pick.pickNumber}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {pick.roundNumber}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {pick.team ? `${pick.team.teamNumber} - ${pick.team.name}` : 'Team not found'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {pick.participant?.user?.name || pick.participant?.user?.email || 'Unknown'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(pick.pickedAt).toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

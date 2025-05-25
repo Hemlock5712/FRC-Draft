@@ -106,4 +106,33 @@ export const getDraftState = query({
       timeRemaining,
     };
   },
+});
+
+// Get all draft rooms where a user is a participant
+export const getUserDraftRooms = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    // Get all participant records and filter for this user
+    const allParticipations = await ctx.db
+      .query("draftParticipants")
+      .collect();
+
+    const userParticipations = allParticipations.filter(p => p.userId === args.userId);
+
+    // Get the draft rooms for these participations
+    const draftRooms = await Promise.all(
+      userParticipations.map(async (participation) => {
+        const room = await ctx.db.get(participation.draftRoomId as Id<"draftRooms">);
+        if (!room) return null;
+
+        return {
+          ...room,
+          teamsToStart: room.teamsToStart || 5, // Use room value or default
+        };
+      })
+    );
+
+    // Filter out null rooms and return
+    return draftRooms.filter(room => room !== null);
+  },
 }); 
