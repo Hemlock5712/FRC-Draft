@@ -256,7 +256,7 @@ export const getTopTeamsByWeek = query({
     for (const teamData of sortedTeams) {
       const team = await ctx.db
         .query("teams")
-        .filter(q => q.eq(q.field("teamId"), teamData.teamId))
+        .withIndex("by_teamId", q => q.eq("teamId", teamData.teamId))
         .first();
       
       if (team) {
@@ -270,6 +270,8 @@ export const getTopTeamsByWeek = query({
           },
           averagePoints: Math.round((teamData.totalPoints / teamData.eventCount) * 100) / 100,
         });
+      } else {
+        console.warn(`Team not found for teamId: ${teamData.teamId}`);
       }
     }
     
@@ -446,7 +448,7 @@ export const getUserRoster = query({
     for (const entry of rosterEntries) {
       const team = await ctx.db
         .query("teams")
-        .filter(q => q.eq(q.field("teamId"), entry.teamId))
+        .withIndex("by_teamId", q => q.eq("teamId", entry.teamId))
         .first();
       
       if (team) {
@@ -458,6 +460,13 @@ export const getUserRoster = query({
             teamNumber: team.teamNumber,
             name: team.name,
           },
+        });
+      } else {
+        console.error(`Team not found for teamId: ${entry.teamId} in roster entry ${entry._id}`);
+        // Still add the entry but with null team data for debugging
+        enrichedRoster.push({
+          ...entry,
+          team: null,
         });
       }
     }
