@@ -376,7 +376,7 @@ export const syncTeamsFromTBAPublic = mutation({
   },
 });
 
-const MAX_TEAMS_PER_CHUNK = 50; // Reduced to prevent mutation timeouts
+const MAX_TEAMS_PER_CHUNK = 500; // Increased to process more teams per chunk
 
 // Action to fetch teams from The Blue Alliance API and process in chunks
 export const fetchTeamsFromTBAAction = internalAction({
@@ -398,7 +398,7 @@ export const fetchTeamsFromTBAAction = internalAction({
     let page = 0;
     let consecutiveEmptyPages = 0;
     const MAX_EMPTY_PAGES = 3;
-    const MAX_TOTAL_PAGES_TO_CHECK = 500; // Safeguard
+    const MAX_TOTAL_PAGES_TO_CHECK = 1000; // Increased safeguard to allow more teams
 
     console.log("Action (fetchTeamsFromTBAAction): Starting fetch from TBA, processing in chunks.");
 

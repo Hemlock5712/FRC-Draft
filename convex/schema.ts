@@ -248,4 +248,121 @@ export default defineSchema({
   .index("by_user_draft", ["userId", "draftRoomId"])
   .index("by_draft_room", ["draftRoomId"])
   .index("by_team", ["teamId"]),
+
+  // ===== PHASE 5: LEAGUE MANAGEMENT & SCORING TABLES =====
+
+  // League Weekly Scores - tracks weekly fantasy scores for each user in each league
+  leagueWeeklyScores: defineTable({
+    draftRoomId: v.string(), // Reference to draft room/league
+    userId: v.string(), // Reference to user
+    year: v.number(),
+    week: v.number(),
+    
+    // Weekly scoring
+    weeklyPoints: v.number(), // Total points earned this week
+    startingTeamCount: v.number(), // Number of teams in starting lineup
+    teamScores: v.array(v.object({
+      teamId: v.string(),
+      points: v.number(),
+    })), // Individual team contributions
+    
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+  .index("by_league_year", ["draftRoomId", "year"])
+  .index("by_league_year_week", ["draftRoomId", "year", "week"])
+  .index("by_league_user_week", ["draftRoomId", "userId", "year", "week"])
+  .index("by_league_user_year", ["draftRoomId", "userId", "year"])
+  .index("by_user_year", ["userId", "year"]),
+
+  // ===== PHASE 6: ADVANCED FEATURES & INTEGRATIONS TABLES =====
+
+  // Trade Proposals - tracks team trades between users
+  tradeProposals: defineTable({
+    fromUserId: v.string(), // User initiating the trade
+    toUserId: v.string(), // User receiving the trade proposal
+    draftRoomId: v.string(), // Reference to draft room/league
+    
+    // Trade details
+    offeredTeamIds: v.array(v.string()), // Teams being offered
+    requestedTeamIds: v.array(v.string()), // Teams being requested
+    message: v.optional(v.string()), // Optional message from proposer
+    
+    // Trade status
+    status: v.union(v.literal("PENDING"), v.literal("ACCEPTED"), v.literal("REJECTED")),
+    
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+  .index("by_from_user", ["fromUserId"])
+  .index("by_to_user", ["toUserId"])
+  .index("by_draft_room", ["draftRoomId"])
+  .index("by_status", ["status"]),
+
+  // Waiver Claims - tracks waiver wire pickups
+  waiverClaims: defineTable({
+    userId: v.string(), // User making the claim
+    draftRoomId: v.string(), // Reference to draft room/league
+    teamId: v.string(), // Team being claimed
+    
+    // Waiver details
+    priority: v.number(), // Waiver priority (lower = higher priority)
+    claimType: v.union(v.literal("ADD"), v.literal("DROP")), // Type of claim
+    status: v.union(v.literal("PENDING"), v.literal("APPROVED"), v.literal("REJECTED"), v.literal("ERROR")),
+    
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+  .index("by_user", ["userId"])
+  .index("by_draft_room", ["draftRoomId"])
+  .index("by_status", ["status"])
+  .index("by_priority", ["priority"]),
+
+  // Notifications - user notifications and alerts
+  notifications: defineTable({
+    userId: v.string(), // User receiving the notification
+    type: v.string(), // Notification type (trade, waiver, score, etc.)
+    title: v.string(), // Notification title
+    message: v.string(), // Notification message
+    data: v.optional(v.any()), // Additional data (JSON)
+    
+    // Notification properties
+    priority: v.union(v.literal("LOW"), v.literal("MEDIUM"), v.literal("HIGH")),
+    isRead: v.boolean(), // Whether user has read the notification
+    
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+  .index("by_user", ["userId"])
+  .index("by_type", ["type"])
+  .index("by_priority", ["priority"])
+  .index("by_read_status", ["isRead"]),
+
+  // Head-to-Head Matchups - tracks weekly user vs user matchups
+  headToHeadMatchups: defineTable({
+    draftRoomId: v.string(), // Reference to draft room/league
+    year: v.number(),
+    week: v.number(),
+    
+    // Matchup participants
+    user1Id: v.string(), // First user in matchup
+    user2Id: v.string(), // Second user in matchup
+    
+    // Matchup results
+    status: v.union(v.literal("SCHEDULED"), v.literal("COMPLETED"), v.literal("TIE")),
+    winnerId: v.optional(v.string()), // ID of winning user (null for ties)
+    user1Score: v.optional(v.number()), // User 1's weekly score
+    user2Score: v.optional(v.number()), // User 2's weekly score
+    
+    // Timing
+    completedAt: v.optional(v.string()), // When matchup was completed
+    
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+  .index("by_league_year", ["draftRoomId", "year"])
+  .index("by_league_year_week", ["draftRoomId", "year", "week"])
+  .index("by_user1", ["user1Id"])
+  .index("by_user2", ["user2Id"])
+  .index("by_status", ["status"]),
 }); 

@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "seed-data": "npx tsx scripts/seed-player-data.ts"
   },
   "dependencies": {
     "@auth/core": "^0.34.2",

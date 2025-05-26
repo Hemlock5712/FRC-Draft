@@ -20,6 +20,7 @@ import type * as draftRooms from "../draftRooms.js";
 import type * as migrations from "../migrations.js";
 import type * as playerManagement from "../playerManagement.js";
 import type * as syncStates from "../syncStates.js";
+import type * as tbaActions from "../tbaActions.js";
 import type * as teams from "../teams.js";
 import type * as users from "../users.js";
 
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   migrations: typeof migrations;
   playerManagement: typeof playerManagement;
   syncStates: typeof syncStates;
+  tbaActions: typeof tbaActions;
   teams: typeof teams;
   users: typeof users;
 }>;
