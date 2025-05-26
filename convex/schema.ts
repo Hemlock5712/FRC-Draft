@@ -337,4 +337,32 @@ export default defineSchema({
   .index("by_type", ["type"])
   .index("by_priority", ["priority"])
   .index("by_read_status", ["isRead"]),
+
+  // Head-to-Head Matchups - tracks weekly user vs user matchups
+  headToHeadMatchups: defineTable({
+    draftRoomId: v.string(), // Reference to draft room/league
+    year: v.number(),
+    week: v.number(),
+    
+    // Matchup participants
+    user1Id: v.string(), // First user in matchup
+    user2Id: v.string(), // Second user in matchup
+    
+    // Matchup results
+    status: v.union(v.literal("SCHEDULED"), v.literal("COMPLETED"), v.literal("TIE")),
+    winnerId: v.optional(v.string()), // ID of winning user (null for ties)
+    user1Score: v.optional(v.number()), // User 1's weekly score
+    user2Score: v.optional(v.number()), // User 2's weekly score
+    
+    // Timing
+    completedAt: v.optional(v.string()), // When matchup was completed
+    
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+  .index("by_league_year", ["draftRoomId", "year"])
+  .index("by_league_year_week", ["draftRoomId", "year", "week"])
+  .index("by_user1", ["user1Id"])
+  .index("by_user2", ["user2Id"])
+  .index("by_status", ["status"]),
 }); 

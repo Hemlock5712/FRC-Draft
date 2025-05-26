@@ -47,7 +47,7 @@ export default function LeagueAnalyticsPage() {
   const draftRoomId = params?.draftRoomId as string;
   const [selectedYear, setSelectedYear] = useState(2024);
   const [selectedWeek, setSelectedWeek] = useState<number | undefined>(undefined);
-  const [activeTab, setActiveTab] = useState<'standings' | 'analytics' | 'projections' | 'trading'>('standings');
+  const [activeTab, setActiveTab] = useState<'standings' | 'analytics' | 'projections' | 'trading' | 'matchups'>('standings');
 
   // Fetch league data
   const standings = useQuery(api.playerManagement.getLeagueStandings, {
@@ -152,6 +152,16 @@ export default function LeagueAnalyticsPage() {
                 >
                   Trading
                 </button>
+                <button
+                  onClick={() => setActiveTab('matchups')}
+                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                    activeTab === 'matchups'
+                      ? 'bg-white text-blue-600 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Matchups
+                </button>
               </div>
             </div>
           </div>
@@ -172,6 +182,10 @@ export default function LeagueAnalyticsPage() {
         
         {activeTab === 'trading' && (
           <TradingTab draftRoomId={draftRoomId} />
+        )}
+        
+        {activeTab === 'matchups' && (
+          <MatchupsTab draftRoomId={draftRoomId} />
         )}
       </div>
     </div>
@@ -435,6 +449,32 @@ function TradingTab({ draftRoomId }: { draftRoomId: string }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
             </svg>
             Go to Trading Center
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MatchupsTab({ draftRoomId }: { draftRoomId: string }) {
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow-sm p-8">
+        <div className="text-center">
+          <div className="text-4xl mb-4">⚔️</div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Head-to-Head Matchups</h3>
+          <p className="text-sm text-gray-600 mb-6">
+            View weekly matchups, head-to-head records, and manage the league schedule with animated scoring.
+          </p>
+          
+          <Link
+            href={`/matchups/${draftRoomId}`}
+            className="inline-flex items-center px-6 py-3 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+          >
+            <svg className="h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Go to Matchups Center
           </Link>
         </div>
       </div>

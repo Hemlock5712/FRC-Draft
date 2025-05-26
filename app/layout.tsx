@@ -20,6 +20,9 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: "Fantasy FRC Draft",
   description: "A modern fantasy FRC draft platform",
+  icons: {
+    icon: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({

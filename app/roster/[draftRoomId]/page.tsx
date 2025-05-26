@@ -196,6 +196,16 @@ export default function RosterManagement({ params }: { params: Promise<{ draftRo
               </svg>
               Trade Teams
             </Link>
+            
+            <Link
+              href={`/matchups/${resolvedParams.draftRoomId}`}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            >
+              <svg className="h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Head-to-Head
+            </Link>
           </div>
 
           {/* Error Display */}

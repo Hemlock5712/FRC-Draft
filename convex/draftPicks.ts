@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { createSeasonScheduleInternal } from "./playerManagement";
 
 // Make a draft pick
 export const makePick = mutation({
@@ -115,6 +116,20 @@ export const makePick = mutation({
         endTime: now,
         updatedAt: now,
       });
+      
+      // Automatically create head-to-head schedule for the completed draft
+      try {
+        const currentYear = new Date().getFullYear();
+        // Call the createSeasonSchedule function directly from playerManagement
+        await createSeasonScheduleInternal(ctx, {
+          draftRoomId: args.roomId,
+          year: currentYear,
+          totalWeeks: 8,
+        });
+      } catch (error) {
+        console.error("Failed to create automatic schedule:", error);
+        // Don't throw error here - draft completion should still succeed
+      }
     }
     
     return { pickId, currentPickNumber, roundNumber };
